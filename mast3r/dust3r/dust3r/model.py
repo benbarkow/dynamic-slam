@@ -19,7 +19,7 @@ from models.croco import CroCoNet  # noqa
 import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
-
+from einops import rearrange
 
 
 inf = float('inf')
@@ -172,52 +172,8 @@ class AsymmetricCroCo3DStereo (
             feat1, feat2, pos1, pos2 = self._encode_image_pairs(img1, img2, shape1, shape2)
 
         return (shape1, shape2), (feat1, feat2), (pos1, pos2)
-    ### OLD
-    """
-    def _decoder(self, f1, pos1, f2, pos2):
-        final_output = [(f1, f2)]  # before projection
-    
-        # project to decoder dim
-        f1 = self.decoder_embed(f1)
-        f2 = self.decoder_embed(f2)
 
-        final_output.append((f1, f2))
-        for blk1, blk2 in zip(self.dec_blocks, self.dec_blocks2):
-            # img1 side
-            f1, _ = blk1(*final_output[-1][::+1], pos1, pos2)
-            # img2 side
-            f2, _ = blk2(*final_output[-1][::-1], pos2, pos1)
-            # store the result
-            final_output.append((f1, f2))
 
-        # normalize last output
-        del final_output[1]  # duplicate with final_output[0]
-        final_output[-1] = tuple(map(self.dec_norm, final_output[-1]))
-        return zip(*final_output)
-
-    def _downstream_head(self, head_num, decout, img_shape):
-        B, S, D = decout[-1].shape
-        # img_shape = tuple(map(int, img_shape))
-        head = getattr(self, f'head{head_num}')
-        return head(decout, img_shape)
-
-    def forward(self, view1, view2):
-        # encode the two images --> B,S,D
-        (shape1, shape2), (feat1, feat2), (pos1, pos2) = self._encode_symmetrized(view1, view2)
-
-        # combine all ref images into object-centric representation
-        dec1, dec2 = self._decoder(feat1, pos1, feat2, pos2)
-
-        with torch.cuda.amp.autocast(enabled=False):
-            res1 = self._downstream_head(1, [tok.float() for tok in dec1], shape1)
-            res2 = self._downstream_head(2, [tok.float() for tok in dec2], shape2)
-
-        res2['pts3d_in_other_view'] = res2.pop('pts3d')  # predict view2's pts3d in view1's frame
-        return res1, res2
-    ### OLD
-    """
-    
-    ### NEW
     def _decoder(self, f1, pos1, f2, pos2, mask1, mask2):
         final_output = [(f1, f2)]  # before projection
         original_D = f1.shape[-1]
@@ -230,7 +186,7 @@ class AsymmetricCroCo3DStereo (
         final_output.append((f1, f2))
         for i, (blk1, blk2) in enumerate(zip(self.dec_blocks, self.dec_blocks2)):
             # img1 side
-            f1, _, self_attn1, cross_attn1 = blk1(*final_output[-1][::+1], pos1, pos2, mask1, mask2, None) # mask1, mask2, mask1
+            f1, _, self_attn1, cross_attn1 = blk1(*final_output[-1][::+1], pos1, pos2, None, None, None) # mask1, mask2, mask1
             # img2 side
             f2, _, self_attn2, cross_attn2 = blk2(*final_output[-1][::-1], pos2, pos1, None, None, None) # mask2, mask1, mask2
 
@@ -256,29 +212,30 @@ class AsymmetricCroCo3DStereo (
     # Modified forward function to use the new decoder
     def forward(self, view1, view2):
         # encode the two images --> B,S,D
-        (shape1, shape2), (feat1, feat2), (pos1, pos2) = self._encode_symmetrized(view1, view2)
+        # (shape1, shape2), (feat1, feat2), (pos1, pos2) = self._encode_symmetrized(view1, view2)
 
-        # resize the mask to the shape of the feature
-        mask1 = self._resize_mask(view1, shape1) # if 'atten_mask' not in view1, return None
-        mask2 = self._resize_mask(view2, shape2) # if 'atten_mask' not in view2, return None
+        # # resize the mask to the shape of the feature
+        # mask1 = self._resize_mask(view1, shape1) # if 'atten_mask' not in view1, return None
+        # mask2 = self._resize_mask(view2, shape2) # if 'atten_mask' not in view2, return None
 
-        # combine all ref images into object-centric representation
-        (dec1, dec2), (self_attn1, cross_attn1, self_attn2, cross_attn2) = self._decoder(
-            feat1, pos1, feat2, pos2, mask1, mask2
-        )
+        # # combine all ref images into object-centric representation
+        # (dec1, dec2), (self_attn1, cross_attn1, self_attn2, cross_attn2) = self._decoder(
+        #     feat1, pos1, feat2, pos2, mask1, mask2
+        # )
 
-        with torch.cuda.amp.autocast(enabled=False):
-            res1 = self._downstream_head(1, [tok.float() for tok in dec1], shape1)
-            res2 = self._downstream_head(2, [tok.float() for tok in dec2], shape2)
+        # with torch.cuda.amp.autocast(enabled=False):
+        #     res1 = self._downstream_head(1, [tok.float() for tok in dec1], shape1)
+        #     res2 = self._downstream_head(2, [tok.float() for tok in dec2], shape2)
 
-        res2['pts3d_in_other_view'] = res2.pop('pts3d')  # predict view2's pts3d in view1's frame
+        # res2['pts3d_in_other_view'] = res2.pop('pts3d')  # predict view2's pts3d in view1's frame
 
-        res1['match_feature'] = self._get_feature(feat1, shape1)
-        res1['cross_atten_maps_k'] = self._get_attn_k(torch.cat(cross_attn1), shape1)
-        res2['cross_atten_maps_k'] = self._get_attn_k(torch.cat(cross_attn2), shape2)
+        # res1['match_feature'] = self._get_feature(feat1, shape1)
+        # res1['cross_atten_maps_k'] = self._get_attn_k(torch.cat(cross_attn1), shape1)
+        # res2['cross_atten_maps_k'] = self._get_attn_k(torch.cat(cross_attn2), shape2)
+        print("dustr model---------------------------------")
         
-        return res1, res2
-    
+        # return res1, res2
+   
     # Rest of your existing methods remain the same
     def _resize_mask(self, view, shape):
         if 'atten_mask' not in view:

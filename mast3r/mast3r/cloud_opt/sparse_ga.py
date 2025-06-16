@@ -30,6 +30,8 @@ from dust3r.optim_factory import adjust_learning_rate_by_lr  # noqa
 from dust3r.cloud_opt.base_opt import clean_pointcloud
 from dust3r.viz import SceneViz
 
+from mast3r.cloud_opt.utils.attn_map import AttentionMaskProcessor
+
 
 class SparseGA():
     def __init__(self, img_paths, pairs_in, res_fine, anchors, canonical_paths=None):
@@ -580,7 +582,13 @@ def forward_mast3r(pairs, model, cache_path, desc_conf='desc_conf',
         if not all(os.path.isfile(p) for p in (path1, path2, path_corres)):
             if model is None:
                 continue
+            # res = symmetric_inference(model, img1, img2, device=device)
+            # After running your symmetric_inference
             res = symmetric_inference(model, img1, img2, device=device)
+
+            # Save visualizations
+            processor.save_attention_visualizations('output_folder')
+
             X11, X21, X22, X12 = [r['pts3d'][0] for r in res]
             C11, C21, C22, C12 = [r['conf'][0] for r in res]
             descs = [r['desc'][0] for r in res]
@@ -615,19 +623,32 @@ def symmetric_inference(model, img1, img2, device):
     # compute encoder only once
     feat1, feat2, pos1, pos2 = model._encode_image_pairs(img1, img2, shape1, shape2)
 
-    def decoder(feat1, feat2, pos1, pos2, shape1, shape2):
-        dec1, dec2 = model._decoder(feat1, pos1, feat2, pos2)
+    def decoder(feat1, feat2, pos1, pos2, shape1, shape2, mask1, mask2):
+        #(shape1, shape2), (feat1, feat2), (pos1, pos2) = self._encode_symmetrized(view1, view2)
+
+        # combine all ref images into object-centric representation
+        (dec1, dec2), (self_attn1, cross_attn1, self_attn2, cross_attn2) = model._decoder(
+            feat1, pos1, feat2, pos2, mask1, mask2
+        )
+
         with torch.cuda.amp.autocast(enabled=False):
             res1 = model._downstream_head(1, [tok.float() for tok in dec1], shape1)
             res2 = model._downstream_head(2, [tok.float() for tok in dec2], shape2)
+
+        res2['pts3d_in_other_view'] = res2.pop('pts3d')  # predict view2's pts3d in view1's frame
+
+        res1['match_feature'] = model._get_feature(feat1, shape1)
+        res1['cross_atten_maps_k'] = model._get_attn_k(torch.cat(cross_attn1), shape1)
+        res2['cross_atten_maps_k'] = model._get_attn_k(torch.cat(cross_attn2), shape2)
+
         return res1, res2
 
     # decoder 1-2
-    res11, res21 = decoder(feat1, feat2, pos1, pos2, shape1, shape2)
+    res11, res21 = decoder(feat1, feat2, pos1, pos2, shape1, shape2, None, None)
     # decoder 2-1
-    res22, res12 = decoder(feat2, feat1, pos2, pos1, shape2, shape1)
+    res22, res12 = decoder(feat2, feat1, pos2, pos1, shape2, shape1, None, None)
 
-    return (res11, res21, res22, res12)
+    return res11, res21
 
 
 def extract_correspondences(feats, qonfs, subsample=8, device=None, ptmap_key='pred_desc'):

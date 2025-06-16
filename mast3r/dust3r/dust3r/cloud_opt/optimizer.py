@@ -20,6 +20,7 @@ class PointCloudOptimizer(BasePCOptimizer):
     """
 
     def __init__(self, *args, optimize_pp=False, focal_break=20, **kwargs):
+        print("!in base pc")
         super().__init__(*args, **kwargs)
 
         self.has_im_poses = True  # by definition of this class
