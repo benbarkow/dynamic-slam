@@ -50,7 +50,11 @@ class BasePCOptimizer (nn.Module):
                          pw_break=20,
                          rand_pose=torch.randn,
                          iterationsCount=None,
-                         verbose=True):
+                         verbose=True,
+                        ### NEW
+                         use_atten_mask=True
+                        ### NEW
+                        ):
         super().__init__()
         if not isinstance(view1['idx'], list):
             view1['idx'] = view1['idx'].tolist()
@@ -103,6 +107,113 @@ class BasePCOptimizer (nn.Module):
                 idx = view2['idx'][v]
                 imgs[idx] = view2['img'][v]
             self.imgs = rgb(imgs)
+            
+        self.dynamic_masks = None
+        if 'dynamic_mask' in view1 and 'dynamic_mask' in view2:
+            dynamic_masks = [torch.zeros(hw) for hw in self.imshapes]
+            for v in range(len(self.edges)):
+                idx = view1['idx'][v]
+                dynamic_masks[idx] = view1['dynamic_mask'][v]
+                idx = view2['idx'][v]
+                dynamic_masks[idx] = view2['dynamic_mask'][v]
+            self.dynamic_masks = dynamic_masks
+
+        self.camera_poses = None
+        if 'camera_pose' in view1 and 'camera_pose' in view2:
+            camera_poses = [torch.zeros((4, 4)) for _ in range(self.n_imgs)]
+            for v in range(len(self.edges)):
+                idx = view1['idx'][v]
+                camera_poses[idx] = view1['camera_pose'][v]
+                idx = view2['idx'][v]
+                camera_poses[idx] = view2['camera_pose'][v]
+            self.camera_poses = camera_poses
+
+        self.img_pathes = None
+        if 'instance' in view1 and 'instance' in view2:
+            img_pathes = ['' for _ in range(self.n_imgs)]
+            for v in range(len(self.edges)):
+                idx = view1['idx'][v]
+                img_pathes[idx] = view1['instance'][v]
+                idx = view2['idx'][v]
+                img_pathes[idx] = view2['instance'][v]
+            self.img_pathes = img_pathes
+
+        ### NEW
+        if use_atten_mask:
+            # attention map
+            cross_att_k_i_mean, cross_att_k_i_var, cross_att_k_j_mean, cross_att_k_j_var = self.aggregate_attention_maps(pred1, pred2)
+
+            def fuse_attention_channels(att_maps):
+                # att_maps: B, H, W, C
+                # normalize
+                att_maps_min = att_maps.min()
+                att_maps_max = att_maps.max()
+                att_maps_normalized = (att_maps - att_maps_min) / (att_maps_max - att_maps_min + 1e-6)
+                # average channel
+                att_maps_fused = att_maps_normalized.mean(dim=-1) # B, H, W
+                # normalize
+                att_maps_fused_min = att_maps_fused.min()
+                att_maps_fused_max = att_maps_fused.max()
+                att_maps_fused = (att_maps_fused - att_maps_fused_min) / (att_maps_fused_max - att_maps_fused_min + 1e-6)
+                return att_maps_normalized, att_maps_fused
+            
+            self.cross_att_k_i_mean, self.cross_att_k_i_mean_fused = fuse_attention_channels(cross_att_k_i_mean)
+            self.cross_att_k_i_var, self.cross_att_k_i_var_fused = fuse_attention_channels(cross_att_k_i_var)
+            self.cross_att_k_j_mean, self.cross_att_k_j_mean_fused = fuse_attention_channels(cross_att_k_j_mean)
+            self.cross_att_k_j_var, self.cross_att_k_j_var_fused = fuse_attention_channels(cross_att_k_j_var)
+
+            # create dynamic mask
+            dynamic_map = (1-self.cross_att_k_i_mean_fused) * self.cross_att_k_i_var_fused * self.cross_att_k_j_mean_fused * (1-self.cross_att_k_j_var_fused)
+            dynamic_map_min = dynamic_map.min(dim=1, keepdim=True)[0].min(dim=2, keepdim=True)[0] # B, 1, 1
+            dynamic_map_max = dynamic_map.max(dim=1, keepdim=True)[0].max(dim=2, keepdim=True)[0] # B, 1, 1
+            self.dynamic_map = (dynamic_map - dynamic_map_min) / (dynamic_map_max - dynamic_map_min + 1e-6)
+
+            # feature
+            pred1_feat = pred1['match_feature']
+            feat_i = NoGradParamDict({ij: nn.Parameter(pred1_feat[n], requires_grad=False) for n, ij in enumerate(self.str_edges)})
+            stacked_feat_i = [feat_i[k] for k in self.str_edges]
+            stacked_feat = [None] * len(self.imshapes)
+            for i, ei in enumerate(torch.tensor([i for i, j in self.edges])):
+                stacked_feat[ei]=stacked_feat_i[i]
+            self.stacked_feat = torch.stack(stacked_feat).float().detach()
+
+            self.refined_dynamic_map, self.dynamic_map_labels = cluster_attention_maps(self.stacked_feat, self.dynamic_map, n_clusters=64)
+    def aggregate_attention_maps(self, pred1, pred2):
+        
+        def aggregate_attention(attention_maps, aggregate_j=True):
+            attention_maps = NoGradParamDict({ij: nn.Parameter(attention_maps[n], requires_grad=False) 
+                                            for n, ij in enumerate(self.str_edges)})
+            aggregated_maps = {}
+            for edge, attention_map in attention_maps.items():
+                idx = edge.split('_')[1 if aggregate_j else 0]
+                att = attention_map.clone()
+                if idx not in aggregated_maps: 
+                    aggregated_maps[idx] = [att]
+                else:
+                    aggregated_maps[idx].append(att)
+            stacked_att_mean = [None] * len(self.imshapes)
+            stacked_att_var = [None] * len(self.imshapes)
+            for i, aggregated_map in aggregated_maps.items():
+                att = torch.stack(aggregated_map, dim=-1)
+                att[0,0] = (att[0,1] + att[1,0])/2
+                stacked_att_mean[int(i)] = att.mean(dim=-1)
+                stacked_att_var[int(i)] = att.std(dim=-1)
+            return torch.stack(stacked_att_mean).float().detach(), torch.stack(stacked_att_var).float().detach()
+        
+        cross_att_k_i_mean, cross_att_k_i_var = aggregate_attention(pred1['cross_atten_maps_k'], aggregate_j=True)
+        cross_att_k_j_mean, cross_att_k_j_var = aggregate_attention(pred2['cross_atten_maps_k'], aggregate_j=False)
+        return cross_att_k_i_mean, cross_att_k_i_var, cross_att_k_j_mean, cross_att_k_j_var
+
+    def save_attention_maps(self, save_folder='demo_tmp/attention_vis'):
+        self.vis_attention_masks(1-self.cross_att_k_i_mean_fused, save_folder=save_folder, save_name='cross_att_k_i_mean')
+        self.vis_attention_masks(self.cross_att_k_i_var_fused, save_folder=save_folder, save_name='cross_att_k_i_var')
+        self.vis_attention_masks(1-self.cross_att_k_j_mean_fused, save_folder=save_folder, save_name='cross_att_k_j_mean')
+        self.vis_attention_masks(self.cross_att_k_j_var_fused, save_folder=save_folder, save_name='cross_att_k_j_var')
+        self.vis_attention_masks(self.dynamic_map, save_folder=save_folder, save_name='dynamic_map')
+        self.vis_attention_masks(self.refined_dynamic_map, save_folder=save_folder, save_name='refined_dynamic_map')
+        self.vis_attention_masks(self.refined_dynamic_map, save_folder=save_folder, save_name='refined_dynamic_map_labels', \
+                            cluster_labels=self.dynamic_map_labels)
+        ### NEW
 
     @property
     def n_edges(self):
