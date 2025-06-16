@@ -30,7 +30,8 @@ from dust3r.optim_factory import adjust_learning_rate_by_lr  # noqa
 from dust3r.cloud_opt.base_opt import clean_pointcloud
 from dust3r.viz import SceneViz
 
-from mast3r.cloud_opt.utils.attn_map import AttentionMaskProcessor
+from mast3r.cloud_opt.utils.attn_map import AttentionMaskGenerator
+
 
 
 class SparseGA():
@@ -586,8 +587,22 @@ def forward_mast3r(pairs, model, cache_path, desc_conf='desc_conf',
             # After running your symmetric_inference
             res = symmetric_inference(model, img1, img2, device=device)
 
-            # Save visualizations
-            processor.save_attention_visualizations('output_folder')
+            original_shape = img1['true_shape']
+                
+            # Create a unique save folder for this pair
+            pair_name = f"{os.path.splitext(os.path.basename(img1['instance']))[0]}_{os.path.splitext(os.path.basename(img2['instance']))[0]}"
+            viz_save_folder = os.path.join(cache_path, "attention_viz", pair_name)
+
+            attn_gen = AttentionMaskGenerator(
+                res=res,
+                original_shape=original_shape,
+                save_folder=viz_save_folder
+            )
+            # This runs the full pipeline and saves all outputs
+            processed_masks = attn_gen.process_and_visualize()
+
+            # You can now use the returned masks if needed
+            # final_mask = processed_masks['refined_dynamic_mask']
 
             X11, X21, X22, X12 = [r['pts3d'][0] for r in res]
             C11, C21, C22, C12 = [r['conf'][0] for r in res]
@@ -635,7 +650,7 @@ def symmetric_inference(model, img1, img2, device):
             res1 = model._downstream_head(1, [tok.float() for tok in dec1], shape1)
             res2 = model._downstream_head(2, [tok.float() for tok in dec2], shape2)
 
-        res2['pts3d_in_other_view'] = res2.pop('pts3d')  # predict view2's pts3d in view1's frame
+        # res2['pts3d_in_other_view'] = res2.pop('pts3d')  # predict view2's pts3d in view1's frame
 
         res1['match_feature'] = model._get_feature(feat1, shape1)
         res1['cross_atten_maps_k'] = model._get_attn_k(torch.cat(cross_attn1), shape1)
@@ -648,7 +663,7 @@ def symmetric_inference(model, img1, img2, device):
     # decoder 2-1
     res22, res12 = decoder(feat2, feat1, pos2, pos1, shape2, shape1, None, None)
 
-    return res11, res21
+    return (res11, res21, res22, res12)
 
 
 def extract_correspondences(feats, qonfs, subsample=8, device=None, ptmap_key='pred_desc'):
