@@ -30,7 +30,7 @@ from dust3r.optim_factory import adjust_learning_rate_by_lr  # noqa
 from dust3r.cloud_opt.base_opt import clean_pointcloud
 from dust3r.viz import SceneViz
 
-from mast3r.cloud_opt.utils.attn_map import AttentionMaskGenerator
+from mast3r.cloud_opt.attn_map import AttentionMaskGenerator
 
 
 

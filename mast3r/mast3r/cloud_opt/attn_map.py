@@ -21,12 +21,13 @@ class AttentionMaskGenerator:
         self.pred1 = res[0]
         self.pred2 = res[1]
 
-        # if not isinstance(view1['idx'], list):
-        #     view1['idx'] = view1['idx'].tolist()
-        # if not isinstance(view2['idx'], list):
-        #     view2['idx'] = view2['idx'].tolist()
-        # self.edges = [(int(i), int(j)) for i, j in zip(view1['idx'], view2['idx'])]
-        self.edges = [(0, 1)]
+        # if not isinstance([view1['idx']], list):
+        view1['idx'] = [view1['idx']]
+        # if not isinstance([view2['idx']], list):
+        view2['idx'] = [view2['idx']]
+        self.edges = [(int(i), int(j)) for i, j in zip(view1['idx'], view2['idx'])]
+        print(self.edges)
+        # self.edges = [(0, 1)]
 
         pred1_pts = self.pred1['pts3d']
         pred2_pts = self.pred2['pts3d_in_other_view']
