@@ -586,6 +586,8 @@ def forward_mast3r(pairs, model, cache_path, desc_conf='desc_conf',
             res = symmetric_inference(model, img1, img2, device=device)
             view1, view2 = pairs[0]
             mask_generator = AttentionMaskGenerator(res, img1, img2)
+            mask_generator.set_cross_att()
+            mask_generator.save_attention_maps()
             # After running your symmetric_inference
 
             X11, X21, X22, X12 = [r['pts3d'][0] for r in res]
@@ -634,7 +636,8 @@ def symmetric_inference(model, img1, img2, device):
             res1 = model._downstream_head(1, [tok.float() for tok in dec1], shape1)
             res2 = model._downstream_head(2, [tok.float() for tok in dec2], shape2)
 
-        res2['pts3d_in_other_view'] = res2.pop('pts3d')  # predict view2's pts3d in view1's frame
+        # Removed the pop so that we can do the stuff with pts3d in sparse_ga
+        res2['pts3d_in_other_view'] = res2['pts3d']  # predict view2's pts3d in view1's frame
 
         res1['match_feature'] = model._get_feature(feat1, shape1)
         res1['cross_atten_maps_k'] = model._get_attn_k(torch.cat(cross_attn1), shape1)
