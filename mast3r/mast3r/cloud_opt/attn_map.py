@@ -20,22 +20,39 @@ class AttentionMaskGenerator:
     def __init__(self, res, view1, view2):
         self.pred1 = res[0]
         self.pred2 = res[1]
+        self.pred3 = res[2]
+        self.pred4 = res[3]
+
+        print("cross shape 1",self.pred1["cross_atten_maps_k"].shape)
+        print("cross shape 2",self.pred2["cross_atten_maps_k"].shape)
+        self.pred1["cross_atten_maps_k"] = torch.stack((self.pred1["cross_atten_maps_k"].squeeze(0), self.pred3["cross_atten_maps_k"].squeeze(0)))
+        self.pred2["cross_atten_maps_k"] = torch.stack((self.pred2["cross_atten_maps_k"].squeeze(0), self.pred4["cross_atten_maps_k"].squeeze(0)))
+        print("cross shape 1",self.pred1["cross_atten_maps_k"].shape)
+        print("cross shape 2",self.pred2["cross_atten_maps_k"].shape)
 
         view1["idx"] = [view1["idx"]]
         view2["idx"] = [view2["idx"]]
         self.edges = [
             (int(i), int(j)) for i, j in zip(view1["idx"], view2["idx"])
         ]
+        print("edges", self.edges)
+        self.edges = [(0, 1), (1, 0)]
 
         pred1_pts = self.pred1["pts3d"]
+        pred3_pts = self.pred3["pts3d"]
+        pred1_pts = pred1_pts.squeeze(0)
+        pred3_pts = pred3_pts.squeeze(0)
+        pred13_pts = torch.stack((pred1_pts, pred3_pts)) 
+
         pred2_pts = self.pred2["pts3d_in_other_view"]
+        pred24_pts = torch.stack((pred2_pts.squeeze(0), self.pred4["pts3d_in_other_view"].squeeze(0)))
         self.pred_i = NoGradParamDict(
-            {ij: pred1_pts[n] for n, ij in enumerate(self.str_edges)}
+            {ij: pred13_pts[n] for n, ij in enumerate(self.str_edges)}
         )
         self.pred_j = NoGradParamDict(
-            {ij: pred2_pts[n] for n, ij in enumerate(self.str_edges)}
+            {ij: pred24_pts[n] for n, ij in enumerate(self.str_edges)}
         )
-        self.imshapes = get_imshapes(self.edges, pred1_pts, pred2_pts)
+        self.imshapes = get_imshapes(self.edges, pred13_pts, pred24_pts)
         print(self.imshapes)
         pass
 
@@ -57,6 +74,8 @@ class AttentionMaskGenerator:
             # normalize
             att_maps_min = att_maps.min()
             att_maps_max = att_maps.max()
+            print("att_maps min/max:", att_maps_min, att_maps_max)
+            print("att_maps contains nan:", torch.isnan(att_maps).any())
             att_maps_normalized = (att_maps - att_maps_min) / (
                 att_maps_max - att_maps_min + 1e-6
             )
@@ -65,6 +84,8 @@ class AttentionMaskGenerator:
             # normalize
             att_maps_fused_min = att_maps_fused.min()
             att_maps_fused_max = att_maps_fused.max()
+            print("att_maps_fused min/max:", att_maps_fused_min, att_maps_fused_max)
+            print("att_maps_fused contains nan:", torch.isnan(att_maps_fused).any())
             att_maps_fused = (
                 att_maps_fused - att_maps_fused_min
             ) / (att_maps_fused_max - att_maps_fused_min + 1e-6)
@@ -89,78 +110,28 @@ class AttentionMaskGenerator:
 
     def aggregate_attention_maps(self, pred1, pred2):
         def aggregate_attention(attention_maps, aggregate_j=True):
-            attention_maps_dict = NoGradParamDict(
-                {
-                    ij: nn.Parameter(attention_maps[n], requires_grad=False)
-                    for n, ij in enumerate(self.str_edges)
-                }
-            )
+            attention_maps = NoGradParamDict({ij: nn.Parameter(attention_maps[n], requires_grad=False) 
+                                            for n, ij in enumerate(self.str_edges)})
             aggregated_maps = {}
-            for edge, attention_map in attention_maps_dict.items():
-                idx = edge.split("_")[1 if aggregate_j else 0]
+            for edge, attention_map in attention_maps.items():
+                idx = edge.split('_')[1 if aggregate_j else 0]
                 att = attention_map.clone()
-                if idx not in aggregated_maps:
+                if idx not in aggregated_maps: 
                     aggregated_maps[idx] = [att]
                 else:
                     aggregated_maps[idx].append(att)
-
             stacked_att_mean = [None] * len(self.imshapes)
             stacked_att_var = [None] * len(self.imshapes)
-
-            # --- Start of Fix ---
-
-            # This loop now correctly handles both single and multiple maps
-            for i, aggregated_map_list in aggregated_maps.items():
-                # If there's more than one map, stack and calculate stats
-                if len(aggregated_map_list) > 1:
-                    att = torch.stack(aggregated_map_list, dim=-1)
-                    mean_tensor = att.mean(dim=-1)
-                    var_tensor = att.std(dim=-1)
-                # If there's only one, no stacking is needed
-                else:
-                    mean_tensor = aggregated_map_list[0]
-                    # The variance of a single item is 0
-                    var_tensor = torch.zeros_like(mean_tensor)
-
-                stacked_att_mean[int(i)] = mean_tensor
-                stacked_att_var[int(i)] = var_tensor
-
-            # Get a sample tensor to determine shape, dtype, and device for placeholders
-            sample_tensor = next(iter(attention_maps_dict.values()))
-
-            # Fill any remaining `None` slots with zero tensors
-            for i in range(len(stacked_att_mean)):
-                if stacked_att_mean[i] is None:
-                    placeholder_shape = sample_tensor.shape
-                    stacked_att_mean[i] = torch.zeros(
-                        placeholder_shape,
-                        dtype=sample_tensor.dtype,
-                        device=sample_tensor.device,
-                    )
-                    stacked_att_var[i] = torch.zeros(
-                        placeholder_shape,
-                        dtype=sample_tensor.dtype,
-                        device=sample_tensor.device,
-                    )
-            # --- End of Fix ---
-
-            return (
-                torch.stack(stacked_att_mean).float().detach(),
-                torch.stack(stacked_att_var).float().detach(),
-            )
-
-        cross_att_k_i_mean, cross_att_k_i_var = aggregate_attention(
-            pred1["cross_atten_maps_k"], aggregate_j=True
-        )
-        cross_att_k_j_mean, cross_att_k_j_var = aggregate_attention(
-            pred2["cross_atten_maps_k"], aggregate_j=False
-        )
-        return (
-            cross_att_k_i_mean,
-            cross_att_k_i_var,
-            cross_att_k_j_mean,
-            cross_att_k_j_var,
-        )
+            for i, aggregated_map in aggregated_maps.items():
+                att = torch.stack(aggregated_map, dim=-1)
+                att[0,0] = (att[0,1] + att[1,0])/2
+                stacked_att_mean[int(i)] = att.mean(dim=-1)
+                stacked_att_var[int(i)] = att.std(dim=-1)
+            return torch.stack(stacked_att_mean).float().detach(), torch.stack(stacked_att_var).float().detach()
+        
+        cross_att_k_i_mean, cross_att_k_i_var = aggregate_attention(pred1['cross_atten_maps_k'], aggregate_j=True)
+        cross_att_k_j_mean, cross_att_k_j_var = aggregate_attention(pred2['cross_atten_maps_k'], aggregate_j=False)
+        return cross_att_k_i_mean, cross_att_k_i_var, cross_att_k_j_mean, cross_att_k_j_var
 
     def save_attention_maps(self, save_folder='demo_tmp/attention_vis'):
         self.vis_attention_masks(1-self.cross_att_k_i_mean_fused, save_folder=save_folder, save_name='cross_att_k_i_mean')
@@ -176,6 +147,7 @@ class AttentionMaskGenerator:
     def vis_attention_masks(self, attns_fused, save_folder='demo_tmp/attention_vis', save_name='attention_channels_all_frames', cluster_labels=None):
 
         def adaptive_multiotsu_variance(img, verbose=False):
+            print(img)
             """adaptive multi-threshold Otsu algorithm based on inter-class variance maximization
             
             Args:
@@ -216,15 +188,20 @@ class AttentionMaskGenerator:
 
         B, H, W = attns_fused.shape
         # ensure self.imshape exists, otherwise use the original size
-        target_size = getattr(self, 'imshape', (H, W))
+        target_size = getattr(self, 'imshape', (384, 512))
+        print(target_size)
         
         # upsample the attention maps
+        print("upsampled before", attns_fused.shape)
+        print("nones", torch.isnan(attns_fused).any())
         upsampled_attns = torch.nn.functional.interpolate(
             attns_fused.unsqueeze(1),  # [B, 1, H, W]
             size=target_size, 
             mode='nearest'
         ).squeeze(1)  # [B, H', W']
         
+        print("upsampled after", upsampled_attns.shape)
+        print("upsampled after", upsampled_attns)
         # if there is cluster_labels, also upsample it
         if cluster_labels is not None:
             upsampled_labels = torch.nn.functional.interpolate(
@@ -277,7 +254,8 @@ class AttentionMaskGenerator:
         os.makedirs(fused_save_folder, exist_ok=True)
 
         # save video
-        if B > 0:
+        #TODO implement ffmpeg properly
+        if B > 0 and False:
             # create frames directory for stacked_att_img
             frames_att_dir = os.path.join(fused_save_folder, 'frames_att')
             os.makedirs(frames_att_dir, exist_ok=True)
