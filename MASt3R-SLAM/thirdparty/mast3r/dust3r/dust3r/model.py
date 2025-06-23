@@ -168,26 +168,31 @@ class AsymmetricCroCo3DStereo (
 
         return (shape1, shape2), (feat1, feat2), (pos1, pos2)
 
-    def _decoder(self, f1, pos1, f2, pos2):
+    def _decoder(self, f1, pos1, f2, pos2, mask1, mask2):
         final_output = [(f1, f2)]  # before projection
+        original_D = f1.shape[-1]
+        attention_maps = []
 
         # project to decoder dim
         f1 = self.decoder_embed(f1)
         f2 = self.decoder_embed(f2)
 
         final_output.append((f1, f2))
-        for blk1, blk2 in zip(self.dec_blocks, self.dec_blocks2):
+        for i, (blk1, blk2) in enumerate(zip(self.dec_blocks, self.dec_blocks2)):
             # img1 side
-            f1, _ = blk1(*final_output[-1][::+1], pos1, pos2)
+            f1, _, self_attn1, cross_attn1 = blk1(*final_output[-1][::+1], pos1, pos2, None, None, None) # mask1, mask2, mask1
             # img2 side
-            f2, _ = blk2(*final_output[-1][::-1], pos2, pos1)
+            f2, _, self_attn2, cross_attn2 = blk2(*final_output[-1][::-1], pos2, pos1, None, None, None) # mask2, mask1, mask2
+
             # store the result
             final_output.append((f1, f2))
+            attention_maps.append((self_attn1, cross_attn1, self_attn2, cross_attn2))
 
         # normalize last output
         del final_output[1]  # duplicate with final_output[0]
         final_output[-1] = tuple(map(self.dec_norm, final_output[-1]))
-        return zip(*final_output)
+        
+        return zip(*final_output), zip(*attention_maps)
 
     def _downstream_head(self, head_num, decout, img_shape):
         B, S, D = decout[-1].shape

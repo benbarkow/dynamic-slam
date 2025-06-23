@@ -33,10 +33,19 @@ def load_retriever(mast3r_model, retriever_path=None, device="cuda"):
 
 @torch.inference_mode
 def decoder(model, feat1, feat2, pos1, pos2, shape1, shape2):
-    dec1, dec2 = model._decoder(feat1, pos1, feat2, pos2)
+    (dec1, dec2), (self_attn1, cross_attn1, self_attn2, cross_attn2) = model._decoder(
+        feat1, pos1, feat2, pos2, None, None
+    )
     with torch.amp.autocast(enabled=False, device_type="cuda"):
         res1 = model._downstream_head(1, [tok.float() for tok in dec1], shape1)
         res2 = model._downstream_head(2, [tok.float() for tok in dec2], shape2)
+
+    res2['pts3d_in_other_view'] = res2['pts3d'] # predict view2's pts3d in view1's frame
+
+    res1['match_feature'] = model._get_feature(feat1, shape1)
+    res1['cross_atten_maps_k'] = model._get_attn_k(torch.cat(cross_attn1), shape1)
+    res2['cross_atten_maps_k'] = model._get_attn_k(torch.cat(cross_attn2), shape2)
+
     return res1, res2
 
 
@@ -203,11 +212,16 @@ def mast3r_asymmetric_inference(model, frame_i, frame_j):
     # 4xhxwxc
     X, C, D, Q = torch.stack(X), torch.stack(C), torch.stack(D), torch.stack(Q)
     X, C, D, Q = downsample(X, C, D, Q)
-    return X, C, D, Q
+    return (X, C, D, Q), (res11, res21)
 
 
 def mast3r_match_asymmetric(model, frame_i, frame_j, idx_i2j_init=None):
-    X, C, D, Q = mast3r_asymmetric_inference(model, frame_i, frame_j)
+    (X, C, D, Q), (res1, res2) = mast3r_asymmetric_inference(model, frame_i, frame_j)
+
+    print("res1 attn_maps----------------------------------------------------")
+    print(res1["cross_atten_maps_k"])
+    print("res2 attn_maps----------------------------------------------------")
+    print(res2["cross_atten_maps_k"])
 
     b, h, w = X.shape[:-1]
     # 2 outputs per inference
