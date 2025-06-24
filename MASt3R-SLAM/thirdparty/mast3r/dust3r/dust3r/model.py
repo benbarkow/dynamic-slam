@@ -17,6 +17,11 @@ from dust3r.patch_embed import get_patch_embed
 import dust3r.utils.path_to_croco  # noqa: F401
 from models.croco import CroCoNet  # noqa
 
+import numpy as np
+import matplotlib.pyplot as plt
+from PIL import Image
+from einops import rearrange
+
 inf = float('inf')
 
 hf_version_number = huggingface_hub.__version__
@@ -213,3 +218,36 @@ class AsymmetricCroCo3DStereo (
 
         res2['pts3d_in_other_view'] = res2.pop('pts3d')  # predict view2's pts3d in view1's frame
         return res1, res2
+
+    
+    # Rest of your existing methods remain the same
+    def _resize_mask(self, view, shape):
+        if 'atten_mask' not in view:
+            return None
+        H, W = shape[0].cpu().tolist()
+        N_H = H // 16
+        N_W = W // 16
+        mask = view['atten_mask'] # dynamic_mask
+        # downsample the mask to the shape of N_H x N_W
+        max_pool = torch.nn.MaxPool2d(kernel_size=16, stride=16)
+        mask = max_pool(mask.float().unsqueeze(1)).squeeze(1)
+        mask = rearrange(mask, 'b nh nw -> b (nh nw) 1', nh=N_H, nw=N_W)
+        return mask
+
+    def _get_feature(self, feats, shape):
+        H, W = shape[0].cpu().tolist()
+        # Number of patches in height and width
+        N_H = H // 16
+        N_W = W // 16
+        # Reshape tokens to spatial representation
+        feats = rearrange(feats, 'b (nh nw) c -> b nh nw c', nh=N_H, nw=N_W)
+        return feats
+
+    def _get_attn_k(self, attn, shape):
+        H, W = shape[0].cpu().tolist()
+        N_H = H // 16
+        N_W = W // 16
+        reshaped_attn = rearrange(attn, 'l h (nh nw) (nh2 nw2) -> 1 nh nw nh2 nw2 l h', 
+                                nh=N_H, nw=N_W, nh2=N_H, nw2=N_W)
+        reshaped_attn = reshaped_attn[...,0:,:].mean(dim=(1, 2)).view(-1, N_H, N_W, 12*12)
+        return reshaped_attn

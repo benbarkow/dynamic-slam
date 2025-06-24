@@ -30,6 +30,7 @@ def load_model(model_path, device, verbose=True):
     assert "landscape_only=False" in args
     if verbose:
         print(f"instantiating : {args}")
+        print("here here")
     net = eval(args)
     s = net.load_state_dict(ckpt['model'], strict=False)
     if verbose:
@@ -42,6 +43,7 @@ class AsymmetricMASt3R(AsymmetricCroCo3DStereo):
         self.desc_mode = desc_mode
         self.two_confs = two_confs
         self.desc_conf_mode = desc_conf_mode
+        print("init asymmetricMaster")
         super().__init__(**kwargs)
 
     @classmethod

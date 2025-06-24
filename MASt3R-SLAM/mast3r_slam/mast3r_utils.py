@@ -9,6 +9,7 @@ from mast3r.model import AsymmetricMASt3R
 from mast3r_slam.retrieval_database import RetrievalDatabase
 from mast3r_slam.config import config
 import mast3r_slam.matching as matching
+from mast3r_slam.attn_mask import AttentionMaskGenerator
 
 
 def load_mast3r(path=None, device="cuda"):
@@ -40,7 +41,7 @@ def decoder(model, feat1, feat2, pos1, pos2, shape1, shape2):
         res1 = model._downstream_head(1, [tok.float() for tok in dec1], shape1)
         res2 = model._downstream_head(2, [tok.float() for tok in dec2], shape2)
 
-    res2['pts3d_in_other_view'] = res2['pts3d'] # predict view2's pts3d in view1's frame
+    res2['pts3d_in_other_view'] = res2['pts3d']
 
     res1['match_feature'] = model._get_feature(feat1, shape1)
     res1['cross_atten_maps_k'] = model._get_attn_k(torch.cat(cross_attn1), shape1)
@@ -215,13 +216,34 @@ def mast3r_asymmetric_inference(model, frame_i, frame_j):
     return (X, C, D, Q), (res11, res21)
 
 
-def mast3r_match_asymmetric(model, frame_i, frame_j, idx_i2j_init=None):
-    (X, C, D, Q), (res1, res2) = mast3r_asymmetric_inference(model, frame_i, frame_j)
+def mast3r_match_asymmetric(model, frame_i, frame_j, frame_k, idx_i2j_init=None):
+    (X, C, D, Q), (res_i_to_j, res_j_in_i) = mast3r_asymmetric_inference(model, frame_i, frame_j)
+    if frame_k is None:
+        print("Only two frames provided. Skipping variance-based masking.")
+    else:
+        print("Three frames provided. Performing 6-way inference for variance calculation.")
+        (_, _, _, _), (res_j_to_i, res_i_in_j) = mast3r_asymmetric_inference(model, frame_j, frame_i)
+        (_, _, _, _), (res_i_to_k, res_k_in_i) = mast3r_asymmetric_inference(model, frame_i, frame_k)
+        (_, _, _, _), (res_k_to_i, res_i_in_k) = mast3r_asymmetric_inference(model, frame_k, frame_i)
+        (_, _, _, _), (res_j_to_k, res_k_in_j) = mast3r_asymmetric_inference(model, frame_j, frame_k)
+        (_, _, _, _), (res_k_to_j, res_j_in_k) = mast3r_asymmetric_inference(model, frame_k, frame_j)
+        edges = [(0, 1), (1, 0), (0, 2), (2, 0), (1, 2), (2, 1)]
 
-    print("res1 attn_maps----------------------------------------------------")
-    print(res1["cross_atten_maps_k"])
-    print("res2 attn_maps----------------------------------------------------")
-    print(res2["cross_atten_maps_k"])
+        all_results = [
+            (res_i_to_j, res_j_in_i),
+            (res_j_to_i, res_i_in_j),
+            (res_i_to_k, res_k_in_i),
+            (res_k_to_i, res_i_in_k),
+            (res_j_to_k, res_k_in_j),
+            (res_k_to_j, res_j_in_k)
+        ]
+        mask_generator = AttentionMaskGenerator(all_results, edges)
+        mask_generator.set_cross_att()
+        mask_generator.save_attention_maps(id=frame_i.frame_id)
+    # print("res1 attn_maps----------------------------------------------------")
+    # print(res1["cross_atten_maps_k"])
+    # print("res2 attn_maps----------------------------------------------------")
+    # print(res2["cross_atten_maps_k"])
 
     b, h, w = X.shape[:-1]
     # 2 outputs per inference

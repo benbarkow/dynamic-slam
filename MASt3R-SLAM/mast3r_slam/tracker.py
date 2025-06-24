@@ -26,10 +26,10 @@ class FrameTracker:
         self.idx_f2k = None
 
     def track(self, frame: Frame):
-        keyframe = self.keyframes.last_keyframe()
+        second_last_keyframe, keyframe = self.keyframes.last_two_keyframes()
 
         idx_f2k, valid_match_k, Xff, Cff, Qff, Xkf, Ckf, Qkf = mast3r_match_asymmetric(
-            self.model, frame, keyframe, idx_i2j_init=self.idx_f2k
+            self.model, frame, keyframe, second_last_keyframe, idx_i2j_init=self.idx_f2k
         )
         # Save idx for next
         self.idx_f2k = idx_f2k.clone()

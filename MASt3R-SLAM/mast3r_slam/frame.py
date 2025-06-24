@@ -5,6 +5,7 @@ import lietorch
 import torch
 from mast3r_slam.mast3r_utils import resize_img
 from mast3r_slam.config import config
+from typing import Optional, Union, Tuple
 
 
 class Mode(Enum):
@@ -106,7 +107,7 @@ class Frame:
 
     def get_average_conf(self):
         return self.C / self.N if self.C is not None else None
-
+    
 
 def create_frame(i, img, T_WC, img_size=512, device="cuda:0"):
     img = resize_img(img, img_size)
@@ -305,6 +306,17 @@ class SharedKeyframes:
             if self.n_size.value == 0:
                 return None
             return self[self.n_size.value - 1]
+        
+    def last_two_keyframes(self) -> Optional[Union[Tuple[Frame], Tuple[Frame, Frame]]]:
+        with self.lock:
+            if self.n_size.value == 0:
+                return None
+            elif self.n_size.value == 1:
+                return (None,self[0])
+            else:
+                second_last = self[self.n_size.value - 2]
+                last = self[self.n_size.value - 1]
+                return (second_last, last)
 
     def update_T_WCs(self, T_WCs, idx) -> None:
         with self.lock:
