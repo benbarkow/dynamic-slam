@@ -36,6 +36,9 @@ class AttentionMaskGenerator:
         )
         # Note: The original code used pts3d for both imshapes arguments. Preserving that here.
         self.imshapes = get_imshapes(self.edges, self.pred1["pts3d"], self.pred1["pts3d"])
+        
+    def get_dynamic_masks(self):
+        return self.refined_dynamic_map
 
     @property
     def str_edges(self):
@@ -95,7 +98,6 @@ class AttentionMaskGenerator:
         dynamic_map_max = dynamic_map.max(dim=1, keepdim=True)[0].max(dim=2, keepdim=True)[0] # B, 1, 1
         self.dynamic_map = (dynamic_map - dynamic_map_min) / (dynamic_map_max - dynamic_map_min + 1e-6)
 
-        feature
         pred1_feat = pred1['match_feature']
         feat_i = NoGradParamDict({ij: nn.Parameter(pred1_feat[n], requires_grad=False) for n, ij in enumerate(self.str_edges)})
         stacked_feat_i = [feat_i[k] for k in self.str_edges]

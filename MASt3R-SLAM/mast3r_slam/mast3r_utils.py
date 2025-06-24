@@ -239,7 +239,9 @@ def mast3r_match_asymmetric(model, frame_i, frame_j, frame_k, idx_i2j_init=None)
         ]
         mask_generator = AttentionMaskGenerator(all_results, edges)
         mask_generator.set_cross_att()
-        mask_generator.save_attention_maps(id=frame_i.frame_id)
+        refined_dynamic_maps = mask_generator.get_dynamic_masks();
+        print("refined", refined_dynamic_maps.shape)
+        # mask_generator.save_attention_maps(id=frame_i.frame_id)
     # print("res1 attn_maps----------------------------------------------------")
     # print(res1["cross_atten_maps_k"])
     # print("res2 attn_maps----------------------------------------------------")
