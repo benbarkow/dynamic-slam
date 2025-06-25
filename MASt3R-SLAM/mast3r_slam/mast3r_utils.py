@@ -267,7 +267,7 @@ def mast3r_match_asymmetric(model, frame_i, frame_j, frame_k, idx_i2j_init=None)
 
         mask_generator = AttentionMaskGenerator(all_results, edges)
         mask_generator.set_cross_att()
-        mask_generator.save_attention_maps(frame_i.frame_id)
+        # mask_generator.save_attention_maps(frame_i.frame_id)
         refined_dynamic_maps = mask_generator.get_dynamic_masks();
         mask1, mask2, _ = torch.split(refined_dynamic_maps, [1, 1, 1], dim=0)
         mask1 = mask1.reshape(1, -1, 1).to(device="cuda")
