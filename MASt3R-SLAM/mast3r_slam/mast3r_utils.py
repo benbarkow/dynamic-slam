@@ -33,9 +33,9 @@ def load_retriever(mast3r_model, retriever_path=None, device="cuda"):
 
 
 @torch.inference_mode
-def decoder(model, feat1, feat2, pos1, pos2, shape1, shape2):
+def decoder(model, feat1, feat2, pos1, pos2, shape1, shape2, mask1, mask2):
     (dec1, dec2), (self_attn1, cross_attn1, self_attn2, cross_attn2) = model._decoder(
-        feat1, pos1, feat2, pos2, None, None
+        feat1, pos1, feat2, pos2, mask1, mask2
     )
     with torch.amp.autocast(enabled=False, device_type="cuda"):
         res1 = model._downstream_head(1, [tok.float() for tok in dec1], shape1)
@@ -101,8 +101,8 @@ def mast3r_decode_symmetric_batch(
         feat2 = feat_j[b][None]
         pos1 = pos_i[b][None]
         pos2 = pos_j[b][None]
-        res11, res21 = decoder(model, feat1, feat2, pos1, pos2, shape_i[b], shape_j[b])
-        res22, res12 = decoder(model, feat2, feat1, pos2, pos1, shape_j[b], shape_i[b])
+        res11, res21 = decoder(model, feat1, feat2, pos1, pos2, shape_i[b], shape_j[b], None, None)
+        res22, res12 = decoder(model, feat2, feat1, pos2, pos1, shape_j[b], shape_i[b], None, None)
         res = [res11, res21, res22, res12]
         Xb, Cb, Db, Qb = zip(
             *[
@@ -134,7 +134,7 @@ def mast3r_inference_mono(model, frame):
     pos = frame.pos
     shape = frame.img_true_shape
 
-    res11, res21 = decoder(model, feat, feat, pos, pos, shape, shape)
+    res11, res21 = decoder(model, feat, feat, pos, pos, shape, shape, None, None)
     res = [res11, res21]
     X, C, D, Q = zip(
         *[(r["pts3d"][0], r["conf"][0], r["desc"][0], r["desc_conf"][0]) for r in res]
@@ -191,7 +191,7 @@ def mast3r_match_symmetric(model, feat_i, pos_i, feat_j, pos_j, shape_i, shape_j
 
 
 @torch.inference_mode
-def mast3r_asymmetric_inference(model, frame_i, frame_j):
+def mast3r_asymmetric_inference(model, frame_i, frame_j, mask1=None, mask2=None):
     if frame_i.feat is None:
         frame_i.feat, frame_i.pos, _ = model._encode_image(
             frame_i.img, frame_i.img_true_shape
@@ -205,7 +205,32 @@ def mast3r_asymmetric_inference(model, frame_i, frame_j):
     pos1, pos2 = frame_i.pos, frame_j.pos
     shape1, shape2 = frame_i.img_true_shape, frame_j.img_true_shape
 
-    res11, res21 = decoder(model, feat1, feat2, pos1, pos2, shape1, shape2)
+    res11, res21 = decoder(model, feat1, feat2, pos1, pos2, shape1, shape2, mask1, mask2)
+    res = [res11, res21]
+    X, C, D, Q = zip(
+        *[(r["pts3d"][0], r["conf"][0], r["desc"][0], r["desc_conf"][0]) for r in res]
+    )
+    # 4xhxwxc
+    X, C, D, Q = torch.stack(X), torch.stack(C), torch.stack(D), torch.stack(Q)
+    X, C, D, Q = downsample(X, C, D, Q)
+    return (X, C, D, Q), (res11, res21)
+
+@torch.inference_mode
+def mast3r_asymmetric_inference_no_dynamic(model, frame_i, frame_j, mask1=None, mask2=None):
+    if frame_i.feat is None:
+        frame_i.feat, frame_i.pos, _ = model._encode_image(
+            frame_i.img, frame_i.img_true_shape
+        )
+    if frame_j.feat is None:
+        frame_j.feat, frame_j.pos, _ = model._encode_image(
+            frame_j.img, frame_j.img_true_shape
+        )
+
+    feat1, feat2 = frame_i.feat, frame_j.feat
+    pos1, pos2 = frame_i.pos, frame_j.pos
+    shape1, shape2 = frame_i.img_true_shape, frame_j.img_true_shape
+
+    res11, res21 = decoder(model, feat1, feat2, pos1, pos2, shape1, shape2, mask1, mask2)
     res = [res11, res21]
     X, C, D, Q = zip(
         *[(r["pts3d"][0], r["conf"][0], r["desc"][0], r["desc_conf"][0]) for r in res]
@@ -218,10 +243,12 @@ def mast3r_asymmetric_inference(model, frame_i, frame_j):
 
 def mast3r_match_asymmetric(model, frame_i, frame_j, frame_k, idx_i2j_init=None):
     (X, C, D, Q), (res_i_to_j, res_j_in_i) = mast3r_asymmetric_inference(model, frame_i, frame_j)
+    # (X, C, D, Q), (res_i_to_j, res_j_in_i) = mast3r_asymmetric_inference(model, frame_i, frame_j)
     if frame_k is None:
-        print("Only two frames provided. Skipping variance-based masking.")
+        # print("Only two frames provided. Skipping variance-based masking.")
+        pass
     else:
-        print("Three frames provided. Performing 6-way inference for variance calculation.")
+        # print("Three frames provided. Performing 6-way inference for variance calculation.")
         (_, _, _, _), (res_j_to_i, res_i_in_j) = mast3r_asymmetric_inference(model, frame_j, frame_i)
         (_, _, _, _), (res_i_to_k, res_k_in_i) = mast3r_asymmetric_inference(model, frame_i, frame_k)
         (_, _, _, _), (res_k_to_i, res_i_in_k) = mast3r_asymmetric_inference(model, frame_k, frame_i)
@@ -237,10 +264,15 @@ def mast3r_match_asymmetric(model, frame_i, frame_j, frame_k, idx_i2j_init=None)
             (res_j_to_k, res_k_in_j),
             (res_k_to_j, res_j_in_k)
         ]
+
         mask_generator = AttentionMaskGenerator(all_results, edges)
         mask_generator.set_cross_att()
+        mask_generator.save_attention_maps(frame_i.frame_id)
         refined_dynamic_maps = mask_generator.get_dynamic_masks();
-        print("refined", refined_dynamic_maps.shape)
+        mask1, mask2, _ = torch.split(refined_dynamic_maps, [1, 1, 1], dim=0)
+        mask1 = mask1.reshape(1, -1, 1).to(device="cuda")
+        mask2 = mask2.reshape(1, -1, 1).to(device="cuda")
+        (X, C, D, Q), (_, _) = mast3r_asymmetric_inference(model, frame_i, frame_j, mask1, mask2)
         # mask_generator.save_attention_maps(id=frame_i.frame_id)
     # print("res1 attn_maps----------------------------------------------------")
     # print(res1["cross_atten_maps_k"])
