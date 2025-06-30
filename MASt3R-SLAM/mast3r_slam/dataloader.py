@@ -72,7 +72,6 @@ class TUMDataset(MonocularDataset):
         tstamp_rgb = np.loadtxt(rgb_list, delimiter=" ", dtype=np.unicode_, skiprows=0)
         self.rgb_files = [self.dataset_path / f for f in tstamp_rgb[:, 1]]
         self.timestamps = tstamp_rgb[:, 0]
-        return
         match = re.search(r"freiburg(\d+)", dataset_path)
         idx = int(match.group(1))
         if idx == 1:

@@ -10,6 +10,7 @@ from mast3r_slam.retrieval_database import RetrievalDatabase
 from mast3r_slam.config import config
 import mast3r_slam.matching as matching
 from mast3r_slam.attn_mask import AttentionMaskGenerator
+from einops import rearrange
 
 
 def load_mast3r(path=None, device="cuda"):
@@ -34,6 +35,10 @@ def load_retriever(mast3r_model, retriever_path=None, device="cuda"):
 
 @torch.inference_mode
 def decoder(model, feat1, feat2, pos1, pos2, shape1, shape2, mask1, mask2):
+    
+    mask1 = _resize_mask(mask1, shape1) # if 'atten_mask' not in view1, return None
+    mask2 = _resize_mask(mask2, shape2) # if 'atten_mask' not in view2, return None
+    
     (dec1, dec2), (self_attn1, cross_attn1, self_attn2, cross_attn2) = model._decoder(
         feat1, pos1, feat2, pos2, mask1, mask2
     )
@@ -76,9 +81,13 @@ def mast3r_symmetric_inference(model, frame_i, frame_j):
     feat1, feat2 = frame_i.feat, frame_j.feat
     pos1, pos2 = frame_i.pos, frame_j.pos
     shape1, shape2 = frame_i.img_true_shape, frame_j.img_true_shape
+    
+    # print("symmetric") 
+    # if(frame_i.attn_mask is not None):
+        # print("got attn mask")
 
-    res11, res21 = decoder(model, feat1, feat2, pos1, pos2, shape1, shape2)
-    res22, res12 = decoder(model, feat2, feat1, pos2, pos1, shape2, shape1)
+    res11, res21 = decoder(model, feat1, feat2, pos1, pos2, shape1, shape2, frame_i.attn_mask, frame_j.attn_mask)
+    res22, res12 = decoder(model, feat2, feat1, pos2, pos1, shape2, shape1, frame_j.attn_mask, frame_i.attn_mask)
     res = [res11, res21, res22, res12]
     X, C, D, Q = zip(
         *[(r["pts3d"][0], r["conf"][0], r["desc"][0], r["desc_conf"][0]) for r in res]
@@ -92,7 +101,7 @@ def mast3r_symmetric_inference(model, frame_i, frame_j):
 # NOTE: Assumes img shape the same
 @torch.inference_mode
 def mast3r_decode_symmetric_batch(
-    model, feat_i, pos_i, feat_j, pos_j, shape_i, shape_j
+    model, feat_i, pos_i, feat_j, pos_j, shape_i, shape_j, attn_mask_i, attn_mask_j
 ):
     B = feat_i.shape[0]
     X, C, D, Q = [], [], [], []
@@ -101,8 +110,12 @@ def mast3r_decode_symmetric_batch(
         feat2 = feat_j[b][None]
         pos1 = pos_i[b][None]
         pos2 = pos_j[b][None]
-        res11, res21 = decoder(model, feat1, feat2, pos1, pos2, shape_i[b], shape_j[b], None, None)
-        res22, res12 = decoder(model, feat2, feat1, pos2, pos1, shape_j[b], shape_i[b], None, None)
+        mask1 = attn_mask_i[b][None] if attn_mask_i is not None else None
+        mask2 = attn_mask_j[b][None] if attn_mask_j is not None else None
+        # if(mask1 is not None and mask2 is not None):
+            # print("symmetric_batch", mask1.shape, mask2.shape)
+        res11, res21 = decoder(model, feat1, feat2, pos1, pos2, shape_i[b], shape_j[b], mask1, mask2)
+        res22, res12 = decoder(model, feat2, feat1, pos2, pos1, shape_j[b], shape_i[b], mask2, mask1)
         res = [res11, res21, res22, res12]
         Xb, Cb, Db, Qb = zip(
             *[
@@ -134,6 +147,7 @@ def mast3r_inference_mono(model, frame):
     pos = frame.pos
     shape = frame.img_true_shape
 
+    print("inference mono")
     res11, res21 = decoder(model, feat, feat, pos, pos, shape, shape, None, None)
     res = [res11, res21]
     X, C, D, Q = zip(
@@ -149,9 +163,9 @@ def mast3r_inference_mono(model, frame):
     return Xii, Cii
 
 
-def mast3r_match_symmetric(model, feat_i, pos_i, feat_j, pos_j, shape_i, shape_j):
+def mast3r_match_symmetric(model, feat_i, pos_i, feat_j, pos_j, shape_i, shape_j, attn_mask_i, attn_mask_j):
     X, C, D, Q = mast3r_decode_symmetric_batch(
-        model, feat_i, pos_i, feat_j, pos_j, shape_i, shape_j
+        model, feat_i, pos_i, feat_j, pos_j, shape_i, shape_j, attn_mask_i, attn_mask_j 
     )
 
     # Ordering 4xbxhxwxc
@@ -168,7 +182,7 @@ def mast3r_match_symmetric(model, feat_i, pos_i, feat_j, pos_j, shape_i, shape_j
     D21 = torch.cat((Dji, Dij), dim=0)
 
     # tic()
-    idx_1_to_2, valid_match_2 = matching.match(X11, X21, D11, D21)
+    idx_1_to_2, valid_match_2 = matching.match(X11, X21, D11, D21, None, attn_mask_i, attn_mask_j)
     # toc("Match")
 
     # TODO: Avoid this
@@ -191,7 +205,7 @@ def mast3r_match_symmetric(model, feat_i, pos_i, feat_j, pos_j, shape_i, shape_j
 
 
 @torch.inference_mode
-def mast3r_asymmetric_inference(model, frame_i, frame_j, mask1=None, mask2=None):
+def mast3r_asymmetric_inference(model, frame_i, frame_j):
     if frame_i.feat is None:
         frame_i.feat, frame_i.pos, _ = model._encode_image(
             frame_i.img, frame_i.img_true_shape
@@ -204,6 +218,16 @@ def mast3r_asymmetric_inference(model, frame_i, frame_j, mask1=None, mask2=None)
     feat1, feat2 = frame_i.feat, frame_j.feat
     pos1, pos2 = frame_i.pos, frame_j.pos
     shape1, shape2 = frame_i.img_true_shape, frame_j.img_true_shape
+    
+    # if(frame_i.attn_mask is not None):
+    #     print("attn mask --------", frame_i.attn_mask.shape) 
+    # if(frame_j.attn_mask is not None):
+    #     print("attn mask, j --------", frame_j.attn_mask.shape) 
+    mask1 = None
+    mask2 = None
+    if(frame_i.attn_mask is not None):
+        mask1 = frame_i.attn_mask
+        mask2 = frame_j.attn_mask
 
     res11, res21 = decoder(model, feat1, feat2, pos1, pos2, shape1, shape2, mask1, mask2)
     res = [res11, res21]
@@ -215,40 +239,29 @@ def mast3r_asymmetric_inference(model, frame_i, frame_j, mask1=None, mask2=None)
     X, C, D, Q = downsample(X, C, D, Q)
     return (X, C, D, Q), (res11, res21)
 
-@torch.inference_mode
-def mast3r_asymmetric_inference_no_dynamic(model, frame_i, frame_j, mask1=None, mask2=None):
-    if frame_i.feat is None:
-        frame_i.feat, frame_i.pos, _ = model._encode_image(
-            frame_i.img, frame_i.img_true_shape
-        )
-    if frame_j.feat is None:
-        frame_j.feat, frame_j.pos, _ = model._encode_image(
-            frame_j.img, frame_j.img_true_shape
-        )
-
-    feat1, feat2 = frame_i.feat, frame_j.feat
-    pos1, pos2 = frame_i.pos, frame_j.pos
-    shape1, shape2 = frame_i.img_true_shape, frame_j.img_true_shape
-
-    res11, res21 = decoder(model, feat1, feat2, pos1, pos2, shape1, shape2, mask1, mask2)
-    res = [res11, res21]
-    X, C, D, Q = zip(
-        *[(r["pts3d"][0], r["conf"][0], r["desc"][0], r["desc_conf"][0]) for r in res]
-    )
-    # 4xhxwxc
-    X, C, D, Q = torch.stack(X), torch.stack(C), torch.stack(D), torch.stack(Q)
-    X, C, D, Q = downsample(X, C, D, Q)
-    return (X, C, D, Q), (res11, res21)
-
+def _resize_mask(mask, shape):
+    if(mask is None): 
+        return None
+    H, W = shape[0].cpu().tolist()
+    N_H = H // 16
+    N_W = W // 16
+    # # visualize the mask
+    # import torchvision
+    # torchvision.utils.save_image(mask.float(), 'dynamic_mask1.png')
+    # downsample the mask to the shape of N_H x N_W
+    max_pool = torch.nn.MaxPool2d(kernel_size=16, stride=16)
+    mask = max_pool(mask.float().unsqueeze(1)).squeeze(1)
+    # torchvision.utils.save_image(mask.float(), 'dynamic_mask_downsampled.png')
+    mask = rearrange(mask, 'b nh nw -> b (nh nw) 1', nh=N_H, nw=N_W)
+    return mask
 
 def mast3r_match_asymmetric(model, frame_i, frame_j, frame_k, idx_i2j_init=None):
     (X, C, D, Q), (res_i_to_j, res_j_in_i) = mast3r_asymmetric_inference(model, frame_i, frame_j)
-    # (X, C, D, Q), (res_i_to_j, res_j_in_i) = mast3r_asymmetric_inference(model, frame_i, frame_j)
-    if frame_k is None:
-        # print("Only two frames provided. Skipping variance-based masking.")
+    mask1, mask2 = None, None
+    disable_dynamic = False
+    if frame_k is None or (disable_dynamic is True):
         pass
     else:
-        # print("Three frames provided. Performing 6-way inference for variance calculation.")
         (_, _, _, _), (res_j_to_i, res_i_in_j) = mast3r_asymmetric_inference(model, frame_j, frame_i)
         (_, _, _, _), (res_i_to_k, res_k_in_i) = mast3r_asymmetric_inference(model, frame_i, frame_k)
         (_, _, _, _), (res_k_to_i, res_i_in_k) = mast3r_asymmetric_inference(model, frame_k, frame_i)
@@ -264,15 +277,19 @@ def mast3r_match_asymmetric(model, frame_i, frame_j, frame_k, idx_i2j_init=None)
             (res_j_to_k, res_k_in_j),
             (res_k_to_j, res_j_in_k)
         ]
-
+        
         mask_generator = AttentionMaskGenerator(all_results, edges)
         mask_generator.set_cross_att()
         # mask_generator.save_attention_maps(frame_i.frame_id)
-        refined_dynamic_maps = mask_generator.get_dynamic_masks();
-        mask1, mask2, _ = torch.split(refined_dynamic_maps, [1, 1, 1], dim=0)
-        mask1 = mask1.reshape(1, -1, 1).to(device="cuda")
-        mask2 = mask2.reshape(1, -1, 1).to(device="cuda")
-        (X, C, D, Q), (_, _) = mast3r_asymmetric_inference(model, frame_i, frame_j, mask1, mask2)
+        upsampled_refined_dynamic_map = mask_generator.get_dynamic_map(frame_i.frame_id);
+        mask1, mask2, mask3 = torch.split(upsampled_refined_dynamic_map, [1, 1, 1], dim=0)
+        mask1 = mask1.to(device="cuda")
+        mask2 = mask2.to(device="cuda")
+        mask3 = mask3.to(device="cuda")
+        frame_i.set_attn_mask(mask1)
+        frame_j.set_attn_mask(mask2)
+        frame_k.set_attn_mask(mask3)
+        (X, C, D, Q), (_, _) = mast3r_asymmetric_inference(model, frame_i, frame_j)
         # mask_generator.save_attention_maps(id=frame_i.frame_id)
     # print("res1 attn_maps----------------------------------------------------")
     # print(res1["cross_atten_maps_k"])
@@ -289,8 +306,9 @@ def mast3r_match_asymmetric(model, frame_i, frame_j, frame_k, idx_i2j_init=None)
     Qii, Qji = Q[:b], Q[b:]
 
     idx_i2j, valid_match_j = matching.match(
-        Xii, Xji, Dii, Dji, idx_1_to_2_init=idx_i2j_init
+        Xii, Xji, Dii, Dji, idx_1_to_2_init=idx_i2j_init, mask1=frame_i.dynamic_mask, mask2=frame_j.dynamic_mask
     )
+    # print("valid_match_j", valid_match_j.shape)
 
     # How rest of system expects it
     Xii, Xji = einops.rearrange(X, "b h w c -> b (h w) c")
@@ -299,7 +317,6 @@ def mast3r_match_asymmetric(model, frame_i, frame_j, frame_k, idx_i2j_init=None)
     Qii, Qji = einops.rearrange(Q, "b h w -> b (h w) 1")
 
     return idx_i2j, valid_match_j, Xii, Cii, Qii, Xji, Cji, Qji
-
 
 def _resize_pil_image(img, long_edge_size):
     S = max(img.size)

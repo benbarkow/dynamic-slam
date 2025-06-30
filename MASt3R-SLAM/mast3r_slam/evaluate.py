@@ -62,6 +62,13 @@ def save_reconstruction(savedir, filename, keyframes, c_conf_threshold):
             keyframe.get_average_conf().cpu().numpy().astype(np.float32).reshape(-1)
             > c_conf_threshold
         )
+        
+        # Filter out dynamic regions using dynamic_mask
+        if keyframe.dynamic_mask is not None:
+            print("reconstruct with dynamic_mask")
+            static_mask = ~keyframe.dynamic_mask.cpu().numpy().reshape(-1)
+            valid = valid & static_mask
+        
         pointclouds.append(pW[valid])
         colors.append(color[valid])
     pointclouds = np.concatenate(pointclouds, axis=0)
@@ -77,12 +84,63 @@ def save_keyframes(savedir, timestamps, keyframes: SharedKeyframes):
         keyframe = keyframes[i]
         t = timestamps[keyframe.frame_id]
         filename = savedir / f"{t}.png"
+        
+        original_img = (keyframe.uimg.cpu().numpy() * 255).astype(np.uint8)
+        
+        if keyframe.dynamic_mask is not None:
+            dynamic_mask = keyframe.dynamic_mask.cpu().numpy().squeeze()  # Remove the first dimension
+            mask_img = (dynamic_mask * 255).astype(np.uint8)
+            mask_img_rgb = cv2.cvtColor(mask_img, cv2.COLOR_GRAY2RGB)
+            combined_img = np.hstack([original_img, mask_img_rgb])
+        else:
+            combined_img = original_img
+        
         cv2.imwrite(
             str(filename),
-            cv2.cvtColor(
-                (keyframe.uimg.cpu().numpy() * 255).astype(np.uint8), cv2.COLOR_RGB2BGR
-            ),
+            cv2.cvtColor(combined_img, cv2.COLOR_RGB2BGR)
         )
+        
+        # Save dynamic_masks grid visualization
+        if keyframe.dynamic_masks is not None:
+            dm_filename = savedir / f"{t}_dm.png"
+            save_dynamic_masks_grid(dm_filename, keyframe.dynamic_masks)
+
+
+def save_dynamic_masks_grid(filename, dynamic_masks):
+    """Save all dynamic masks in a grid layout"""
+    masks = dynamic_masks.cpu().numpy()  # Shape: (b, h, w)
+    b, h, w = masks.shape
+    
+    if b == 0:
+        return
+    
+    # Calculate grid dimensions (try to make it roughly square)
+    grid_cols = int(np.ceil(np.sqrt(b)))
+    grid_rows = int(np.ceil(b / grid_cols))
+    
+    # Create grid image
+    grid_h = grid_rows * h
+    grid_w = grid_cols * w
+    grid_img = np.zeros((grid_h, grid_w), dtype=np.uint8)
+    
+    for idx in range(b):
+        row = idx // grid_cols
+        col = idx % grid_cols
+        
+        start_h = row * h
+        end_h = start_h + h
+        start_w = col * w
+        end_w = start_w + w
+        
+        mask_img = (masks[idx] * 255).astype(np.uint8)
+        grid_img[start_h:end_h, start_w:end_w] = mask_img
+    
+    # Convert to RGB and save
+    grid_img_rgb = cv2.cvtColor(grid_img, cv2.COLOR_GRAY2RGB)
+    cv2.imwrite(
+        str(filename),
+        cv2.cvtColor(grid_img_rgb, cv2.COLOR_RGB2BGR)
+    )
 
 
 def save_ply(filename, points, colors):

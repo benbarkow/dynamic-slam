@@ -1,4 +1,5 @@
 use_calib: False
+remove_dynamic: True
 single_thread: True
 dataset:
   subsample: 1

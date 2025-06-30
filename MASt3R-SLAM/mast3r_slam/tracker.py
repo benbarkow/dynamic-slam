@@ -31,6 +31,10 @@ class FrameTracker:
         idx_f2k, valid_match_k, Xff, Cff, Qff, Xkf, Ckf, Qkf = mast3r_match_asymmetric(
             self.model, frame, keyframe, second_last_keyframe, idx_i2j_init=self.idx_f2k
         )
+        
+        #replace keyframes with newly updated frames (masks added) 
+        self.keyframes.update_last_two_keyframes(second_last_keyframe, keyframe)
+        
         # Save idx for next
         self.idx_f2k = idx_f2k.clone()
 
@@ -60,7 +64,7 @@ class FrameTracker:
         valid_Cf = Cf > self.cfg["C_conf"]
         valid_Ck = Ck > self.cfg["C_conf"]
         valid_Q = Qk > self.cfg["Q_conf"]
-
+        
         valid_opt = valid_match_k & valid_Cf & valid_Ck & valid_Q
         valid_kf = valid_match_k & valid_Q
 

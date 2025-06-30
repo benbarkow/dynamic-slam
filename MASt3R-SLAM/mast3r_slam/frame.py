@@ -30,17 +30,48 @@ class Frame:
     N: int = 0
     N_updates: int = 0
     K: Optional[torch.Tensor] = None
+    attn_mask: Optional[torch.Tensor] = None
+    dynamic_masks: Optional[torch.Tensor] = None
+    dynamic_mask: Optional[torch.Tensor] = None
+    
+    def set_attn_mask(self, mask, safe=False):
+        if safe is True:
+            if self.dynamic_mask is None:
+                self.dynamic_mask = mask
+            return
+            
+        self.attn_mask = mask
 
+        if self.dynamic_mask is None:
+            self.dynamic_mask = self.attn_mask.clone()
+        else:
+            self.dynamic_mask = self.dynamic_mask | self.attn_mask
+            
+        if self.dynamic_masks is None:
+            self.dynamic_masks = mask
+        else:
+            print("add mask to keyframe", self.frame_id)
+            self.dynamic_masks = torch.cat([self.dynamic_masks, self.attn_mask], dim=0)
+            print("dimension", self.dynamic_masks.shape)
+    
     def get_score(self, C):
         filtering_score = config["tracking"]["filtering_score"]
         if filtering_score == "median":
-            score = torch.median(C)  # Is this slower than mean? Is it worth it?
+            score = torch.median(C)
         elif filtering_score == "mean":
             score = torch.mean(C)
         return score
 
     def update_pointmap(self, X: torch.Tensor, C: torch.Tensor):
         filtering_mode = config["tracking"]["filtering_mode"]
+        
+        # Apply static mask filtering based on current attention mask (not dynamic mask)
+        # if self.attn_mask is not None:
+        #     static_mask = ~self.attn_mask.view(-1, 1)
+        #     # Only update static regions, keep dynamic regions unchanged
+        #     if self.X_canon is not None:
+        #         X = torch.where(static_mask.repeat(1, 3), X, self.X_canon)
+        #         C = torch.where(static_mask, C, self.C)
 
         if self.N == 0:
             self.X_canon = X.clone()
@@ -140,8 +171,6 @@ class SharedStates:
         self.feat_dim = 1024
         self.num_patches = h * w // (16 * 16)
 
-        # fmt:off
-        # shared state for the current frame (used for reloc/visualization)
         self.dataset_idx = torch.zeros(1, device=device, dtype=torch.int).share_memory_()
         self.img = torch.zeros(3, h, w, device=device, dtype=dtype).share_memory_()
         self.uimg = torch.zeros(h, w, 3, device="cpu", dtype=dtype).share_memory_()
@@ -152,7 +181,6 @@ class SharedStates:
         self.C = torch.zeros(h * w, 1, device=device, dtype=dtype).share_memory_()
         self.feat = torch.zeros(1, self.num_patches, self.feat_dim, device=device, dtype=dtype).share_memory_()
         self.pos = torch.zeros(1, self.num_patches, 2, device=device, dtype=torch.long).share_memory_()
-        # fmt: on
 
     def set_frame(self, frame):
         with self.lock:
@@ -231,7 +259,6 @@ class SharedKeyframes:
         self.feat_dim = 1024
         self.num_patches = h * w // (16 * 16)
 
-        # fmt:off
         self.dataset_idx = torch.zeros(buffer, device=device, dtype=torch.int).share_memory_()
         self.img = torch.zeros(buffer, 3, h, w, device=device, dtype=dtype).share_memory_()
         self.uimg = torch.zeros(buffer, h, w, 3, device="cpu", dtype=dtype).share_memory_()
@@ -246,11 +273,12 @@ class SharedKeyframes:
         self.pos = torch.zeros(buffer, 1, self.num_patches, 2, device=device, dtype=torch.long).share_memory_()
         self.is_dirty = torch.zeros(buffer, 1, device=device, dtype=torch.bool).share_memory_()
         self.K = torch.zeros(3, 3, device=device, dtype=dtype).share_memory_()
-        # fmt: on
+        self.attn_mask = torch.zeros(buffer,1, h, w, device=device, dtype=torch.bool).share_memory_()
+        self.dynamic_mask = torch.zeros(buffer,1, h, w, device=device, dtype=torch.bool).share_memory_()
+        self.dynamic_masks = torch.zeros(buffer, 20, h, w, device=device, dtype=torch.bool).share_memory_()
 
     def __getitem__(self, idx) -> Frame:
         with self.lock:
-            # put all of the data into a frame
             kf = Frame(
                 int(self.dataset_idx[idx]),
                 self.img[idx],
@@ -265,6 +293,31 @@ class SharedKeyframes:
             kf.pos = self.pos[idx]
             kf.N = int(self.N[idx])
             kf.N_updates = int(self.N_updates[idx])
+            attn_mask = self.attn_mask[idx]
+            if torch.equal(attn_mask, torch.zeros_like(attn_mask)):
+                kf.attn_mask = None
+            else:
+                kf.attn_mask = attn_mask
+            
+            dynamic_mask = self.dynamic_mask[idx]
+            if torch.equal(dynamic_mask, torch.zeros_like(dynamic_mask)):
+                kf.dynamic_mask = None
+            else:
+                kf.dynamic_mask = dynamic_mask
+                
+            dynamic_masks = self.dynamic_masks[idx]
+            # Check if any masks are stored (not all zeros)
+            if torch.any(dynamic_masks):
+                # Find the last non-zero mask to determine the actual size
+                non_zero_masks = torch.any(dynamic_masks.view(dynamic_masks.shape[0], -1), dim=1)
+                if torch.any(non_zero_masks):
+                    last_mask_idx = torch.where(non_zero_masks)[0][-1] + 1
+                    kf.dynamic_masks = dynamic_masks[:last_mask_idx]
+                else:
+                    kf.dynamic_masks = None
+            else:
+                kf.dynamic_masks = None
+
             if config["use_calib"]:
                 kf.K = self.K
             return kf
@@ -273,7 +326,6 @@ class SharedKeyframes:
         with self.lock:
             self.n_size.value = max(idx + 1, self.n_size.value)
 
-            # set the attributes
             self.dataset_idx[idx] = value.frame_id
             self.img[idx] = value.img
             self.uimg[idx] = value.uimg
@@ -287,12 +339,23 @@ class SharedKeyframes:
             self.N[idx] = value.N
             self.N_updates[idx] = value.N_updates
             self.is_dirty[idx] = True
+            if value.attn_mask is not None:
+                self.attn_mask[idx] = value.attn_mask
+            if value.dynamic_mask is not None:
+                self.dynamic_mask[idx] = value.dynamic_mask
+            if value.dynamic_masks is not None:
+                # Ensure we don't exceed the allocated space (20 masks)
+                num_masks = min(value.dynamic_masks.shape[0], 20)
+                self.dynamic_masks[idx][:num_masks] = value.dynamic_masks[:num_masks]
+                # Clear any remaining slots if fewer masks than before
+                if num_masks < 20:
+                    self.dynamic_masks[idx][num_masks:] = False
             return idx
 
     def __len__(self):
         with self.lock:
             return self.n_size.value
-
+        
     def append(self, value: Frame):
         with self.lock:
             self[self.n_size.value] = value
@@ -317,6 +380,22 @@ class SharedKeyframes:
                 second_last = self[self.n_size.value - 2]
                 last = self[self.n_size.value - 1]
                 return (second_last, last)
+
+    def update_last_two_keyframes(self, second_last_kf: Frame, last_kf: Frame) -> None:
+        with self.lock:
+            if self.n_size.value < 1:
+                raise ValueError(
+                    "Cannot update keyframes; no keyframes exist."
+                )
+    
+            # Always update the last keyframe
+            last_idx = self.n_size.value - 1
+            self[last_idx] = last_kf
+    
+            # Only update second-to-last if it exists and second_last_kf is not None
+            if self.n_size.value >= 2 and second_last_kf is not None:
+                second_last_idx = self.n_size.value - 2
+                self[second_last_idx] = second_last_kf
 
     def update_T_WCs(self, T_WCs, idx) -> None:
         with self.lock:

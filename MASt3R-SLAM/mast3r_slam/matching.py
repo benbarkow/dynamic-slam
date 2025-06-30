@@ -5,7 +5,7 @@ from mast3r_slam.config import config
 import mast3r_slam_backends
 
 
-def match(X11, X21, D11, D21, idx_1_to_2_init=None):
+def match(X11, X21, D11, D21, idx_1_to_2_init=None, mask1=None, mask2=None):
     idx_1_to_2, valid_match2 = match_iterative_proj(X11, X21, D11, D21, idx_1_to_2_init)
     return idx_1_to_2, valid_match2
 
@@ -49,7 +49,7 @@ def prep_for_iter_proj(X11, X21, idx_1_to_2_init):
     return rays_with_grad_img, pts3d_norm, p_init
 
 
-def match_iterative_proj(X11, X21, D11, D21, idx_1_to_2_init=None):
+def match_iterative_proj(X11, X21, D11, D21, idx_1_to_2_init=None, mask1=None, mask2=None):
     cfg = config["matching"]
     b, h, w = X21.shape[:3]
     device = X11.device
@@ -74,6 +74,17 @@ def match_iterative_proj(X11, X21, D11, D21, idx_1_to_2_init=None):
     )
     valid_dists2 = (dists2 < cfg["dist_thresh"]).view(b, -1)
     valid_proj2 = valid_proj2 & valid_dists2
+    
+    # invalidate matches that land on a masked pixel in the target image (image 2)
+    if mask2 is not None:
+        valid_mask2 = ~mask2.view(b, -1)
+        valid_proj2 = valid_proj2 & valid_mask2
+
+    # invalidate matches that originate from a masked pixel in the source image (image 1)
+    if mask1 is not None:
+        source_is_masked = mask1[batch_inds, p1[..., 1], p1[..., 0]]
+        valid_mask1 = ~source_is_masked
+        valid_proj2 = valid_proj2 & valid_mask1
 
     if cfg["radius"] > 0:
         (p1,) = mast3r_slam_backends.refine_matches(

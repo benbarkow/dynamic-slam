@@ -185,9 +185,9 @@ class AsymmetricCroCo3DStereo (
         final_output.append((f1, f2))
         for i, (blk1, blk2) in enumerate(zip(self.dec_blocks, self.dec_blocks2)):
             # img1 side
-            f1, _, self_attn1, cross_attn1 = blk1(*final_output[-1][::+1], pos1, pos2, mask1, mask2, mask1) # mask1, mask2, mask1
+            f1, _, self_attn1, cross_attn1 = blk1(*final_output[-1][::+1], pos1, pos2, mask1, mask2, None) # mask1, mask2, mask1
             # img2 side
-            f2, _, self_attn2, cross_attn2 = blk2(*final_output[-1][::-1], pos2, pos1, mask2, mask1, mask2) # mask2, mask1, mask2
+            f2, _, self_attn2, cross_attn2 = blk2(*final_output[-1][::-1], pos2, pos1, None, None, None) # mask2, mask1, mask2
 
             # store the result
             final_output.append((f1, f2))

@@ -32,10 +32,18 @@ class FactorGraph:
         kf_jj = [self.frames[idx] for idx in jj]
         feat_i = torch.cat([kf_i.feat for kf_i in kf_ii])
         feat_j = torch.cat([kf_j.feat for kf_j in kf_jj])
+        attn_mask_i = torch.cat([kf_i.dynamic_mask for kf_i in kf_ii]) if all(kf_i.dynamic_mask is not None for kf_i in kf_ii) else None
+        attn_mask_j = torch.cat([kf_j.dynamic_mask for kf_j in kf_jj]) if all(kf_j.dynamic_mask is not None for kf_j in kf_jj) else None
         pos_i = torch.cat([kf_i.pos for kf_i in kf_ii])
         pos_j = torch.cat([kf_j.pos for kf_j in kf_jj])
         shape_i = [kf_i.img_true_shape for kf_i in kf_ii]
         shape_j = [kf_j.img_true_shape for kf_j in kf_jj]
+        
+        print("------------------------------------attn_mask")
+        if(attn_mask_i is not None and attn_mask_j is not None):
+            print(attn_mask_i.shape)
+            print(attn_mask_j.shape)
+        print("end------------------------------------attn_mask")
 
         (
             idx_i2j,
@@ -47,7 +55,7 @@ class FactorGraph:
             Qji,
             Qij,
         ) = mast3r_match_symmetric(
-            self.model, feat_i, pos_i, feat_j, pos_j, shape_i, shape_j
+            self.model, feat_i, pos_i, feat_j, pos_j, shape_i, shape_j, attn_mask_i, attn_mask_j
         )
 
         batch_inds = torch.arange(idx_i2j.shape[0], device=idx_i2j.device)[

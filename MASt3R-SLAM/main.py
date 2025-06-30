@@ -229,7 +229,7 @@ if __name__ == "__main__":
     fps_timer = time.time()
 
     frames = []
-
+    
     while True:
         mode = states.get_mode()
         msg = try_get_msg(viz2main)
@@ -261,6 +261,8 @@ if __name__ == "__main__":
             else states.get_frame().T_WC
         )
         frame = create_frame(i, img, T_WC, img_size=dataset.img_size, device=device)
+        
+        frame 
 
         if mode == Mode.INIT:
             # Initialize via mono inference, and encoded features neeed for database

@@ -35,10 +35,15 @@ class AttentionMaskGenerator:
             {ij: self.pred2["pts3d_in_other_view"][n] for n, ij in enumerate(self.str_edges)}
         )
         # Note: The original code used pts3d for both imshapes arguments. Preserving that here.
-        self.imshapes = get_imshapes(self.edges, self.pred1["pts3d"], self.pred1["pts3d"])
+        self.imshapes = get_imshapes(self.edges, self.pred1["pts3d"], self.pred2["pts3d_in_other_view"])
         
-    def get_dynamic_masks(self):
-        return self.refined_dynamic_map
+    def get_dynamic_map(self, id):
+        upsampled_attns = torch.nn.functional.interpolate(self.refined_dynamic_map.unsqueeze(-1).permute(0, 3, 1, 2), \
+                                                size=self.imshapes[0], mode='bilinear', align_corners=False).permute(0, 2, 3, 1).squeeze(-1) # align_corners=False
+        upsampled_mask = (upsampled_attns > self.adaptive_multiotsu_variance(upsampled_attns.cpu().numpy()))
+        # self.vis_attention_masks(upsampled_attns, save_folder="test/", save_name='test', id=id)
+        # self.save_simple(upsampled_mask, save_folder="test/", save_name='upsampled', id=id)
+        return upsampled_mask
 
     @property
     def str_edges(self):
@@ -145,49 +150,68 @@ class AttentionMaskGenerator:
         self.vis_attention_masks(self.refined_dynamic_map, save_folder=save_folder, save_name='refined_dynamic_map', id=id)
         self.vis_attention_masks(self.refined_dynamic_map, save_folder=save_folder, save_name='refined_dynamic_map_labels', \
                             cluster_labels=self.dynamic_map_labels, id=id)
+    def adaptive_multiotsu_variance(self, img, verbose=False):
+        # print(img)
+        """adaptive multi-threshold Otsu algorithm based on inter-class variance maximization
+        
+        Args:
+            img: input image array
+            verbose: whether to print detailed information
+            
+        Returns:
+            tuple: (best threshold, best number of classes)
+        """
+        max_classes = 4
+        best_score = -float('inf')
+        best_threshold = None
+        best_n_classes = None
+        scores = {}
+        
+        for n_classes in range(2, max_classes + 1):
+            thresholds = threshold_multiotsu(img, classes=n_classes)
+            
+            regions = np.digitize(img, bins=thresholds)
+            var_between = np.var([img[regions == i].mean() for i in range(n_classes)])
+            
+            score = var_between / np.sqrt(n_classes)
+            scores[n_classes] = score
+            
+            if score > best_score:
+                best_score = score
+                best_threshold = thresholds[-1]
+                best_n_classes = n_classes
+        
+        if verbose:
+            print("number of classes score:")
+            for n_classes, score in scores.items():
+                print(f"number of classes {n_classes}: score {score:.4f}" + 
+                    (" (best)" if n_classes == best_n_classes else ""))
+            print(f"final selected number of classes: {best_n_classes}")
+        
+        return best_threshold
+    
+    @torch.no_grad()
+    def save_simple(self, maps, save_folder, save_name, id):
+        # create grid layout  
+        B, H, W = maps.shape
+        masks = maps.float().unsqueeze(1)
+
+        # Optional: Invert if you want white background and black mask
+        # masks = 1.0 - masks
+
+        # Create grid
+        grid_size = int(math.ceil(math.sqrt(B)))
+        grid_img = torchvision.utils.make_grid(masks, nrow=grid_size, padding=2, normalize=False)
+
+        # Save image
+        save_path = os.path.join(f'{save_folder}/frame_{id}/')
+        os.makedirs(save_path, exist_ok=True)
+        torchvision.utils.save_image(grid_img, os.path.join(save_path, f'{id}_{save_name}_binary.png'))
 
     @torch.no_grad()
     def vis_attention_masks(self, attns_fused, save_folder='demo_tmp/attention_vis', save_name='attention_channels_all_frames', cluster_labels=None, id="0"):
 
-        def adaptive_multiotsu_variance(img, verbose=False):
-            # print(img)
-            """adaptive multi-threshold Otsu algorithm based on inter-class variance maximization
-            
-            Args:
-                img: input image array
-                verbose: whether to print detailed information
-                
-            Returns:
-                tuple: (best threshold, best number of classes)
-            """
-            max_classes = 4
-            best_score = -float('inf')
-            best_threshold = None
-            best_n_classes = None
-            scores = {}
-            
-            for n_classes in range(2, max_classes + 1):
-                thresholds = threshold_multiotsu(img, classes=n_classes)
-                
-                regions = np.digitize(img, bins=thresholds)
-                var_between = np.var([img[regions == i].mean() for i in range(n_classes)])
-                
-                score = var_between / np.sqrt(n_classes)
-                scores[n_classes] = score
-                
-                if score > best_score:
-                    best_score = score
-                    best_threshold = thresholds[-1]
-                    best_n_classes = n_classes
-            
-            if verbose:
-                print("number of classes score:")
-                for n_classes, score in scores.items():
-                    print(f"number of classes {n_classes}: score {score:.4f}" + 
-                        (" (best)" if n_classes == best_n_classes else ""))
-                print(f"final selected number of classes: {best_n_classes}")
-            
-            return best_threshold
+        
 
         B, H, W = attns_fused.shape
         # ensure self.imshape exists, otherwise use the original size
@@ -227,7 +251,7 @@ class AttentionMaskGenerator:
             stacked_att_img[i] = colored_att_torch
 
         # calculate mask
-        stacked_mask = (upsampled_attns > adaptive_multiotsu_variance(upsampled_attns.cpu().numpy()))
+        stacked_mask = (upsampled_attns > self.adaptive_multiotsu_variance(upsampled_attns.cpu().numpy()))
 
         if cluster_labels is not None:
             import matplotlib.pyplot as plt
