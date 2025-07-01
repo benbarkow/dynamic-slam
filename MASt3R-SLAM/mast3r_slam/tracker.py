@@ -17,6 +17,7 @@ class FrameTracker:
         self.cfg = config["tracking"]
         self.model = model
         self.keyframes = frames
+        self.frames = frames
         self.device = device
 
         self.reset_idx_f2k()
@@ -26,6 +27,8 @@ class FrameTracker:
         self.idx_f2k = None
 
     def track(self, frame: Frame):
+        
+        """
         second_last_keyframe, keyframe = self.keyframes.last_two_keyframes()
 
         idx_f2k, valid_match_k, Xff, Cff, Qff, Xkf, Ckf, Qkf = mast3r_match_asymmetric(
@@ -34,6 +37,27 @@ class FrameTracker:
         
         #replace keyframes with newly updated frames (masks added) 
         self.keyframes.update_last_two_keyframes(second_last_keyframe, keyframe)
+        """
+        
+        # Add the current frame to SharedStates
+        self.frames.add_frame(frame)  # or however you access SharedStates
+        
+        # Get the last two frames
+        second_last_frame, last_frame = self.frames.last_two_frames()
+        
+        # Only proceed if we have at least the current frame
+        if last_frame is None:
+            return
+        
+        idx_f2k, valid_match_k, Xff, Cff, Qff, Xkf, Ckf, Qkf = mast3r_match_asymmetric(
+            self.model, frame, last_frame, second_last_frame, idx_i2j_init=self.idx_f2k
+        )
+        
+        # Replace frames with newly updated frames (masks added)
+        self.frames.update_last_two_frames(second_last_frame, last_frame)
+        
+        
+        
         
         # Save idx for next
         self.idx_f2k = idx_f2k.clone()

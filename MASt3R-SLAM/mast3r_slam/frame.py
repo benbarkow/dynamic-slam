@@ -34,6 +34,7 @@ class Frame:
     dynamic_masks: Optional[torch.Tensor] = None
     dynamic_mask: Optional[torch.Tensor] = None
     
+    
     def set_attn_mask(self, mask, safe=False):
         if safe is True:
             if self.dynamic_mask is None:
@@ -46,14 +47,15 @@ class Frame:
             self.dynamic_mask = self.attn_mask.clone()
         else:
             self.dynamic_mask = self.dynamic_mask | self.attn_mask
-            
+        """    
         if self.dynamic_masks is None:
             self.dynamic_masks = mask
         else:
             print("add mask to keyframe", self.frame_id)
             self.dynamic_masks = torch.cat([self.dynamic_masks, self.attn_mask], dim=0)
             print("dimension", self.dynamic_masks.shape)
-    
+        """
+        
     def get_score(self, C):
         filtering_score = config["tracking"]["filtering_score"]
         if filtering_score == "median":
@@ -275,7 +277,11 @@ class SharedKeyframes:
         self.K = torch.zeros(3, 3, device=device, dtype=dtype).share_memory_()
         self.attn_mask = torch.zeros(buffer,1, h, w, device=device, dtype=torch.bool).share_memory_()
         self.dynamic_mask = torch.zeros(buffer,1, h, w, device=device, dtype=torch.bool).share_memory_()
-        self.dynamic_masks = torch.zeros(buffer, 20, h, w, device=device, dtype=torch.bool).share_memory_()
+        self.dynamic_masks = torch.zeros(buffer, 1, h, w, device=device, dtype=torch.bool).share_memory_()
+        
+        self.previous_frame = None  # Store as regular instance variables
+        self.current_frame = None
+        self.frame_count = manager.Value("i", 0)
 
     def __getitem__(self, idx) -> Frame:
         with self.lock:
@@ -370,32 +376,35 @@ class SharedKeyframes:
                 return None
             return self[self.n_size.value - 1]
         
-    def last_two_keyframes(self) -> Optional[Union[Tuple[Frame], Tuple[Frame, Frame]]]:
+    
+    def add_frame(self, frame: Frame) -> None:
+        """Add a new frame, keeping only the latest two."""
         with self.lock:
-            if self.n_size.value == 0:
-                return None
-            elif self.n_size.value == 1:
-                return (None,self[0])
-            else:
-                second_last = self[self.n_size.value - 2]
-                last = self[self.n_size.value - 1]
-                return (second_last, last)
+            # Shift frames: current becomes previous, new frame becomes current
+            self.previous_frame = self.current_frame
+            self.current_frame = frame
+            self.frame_count.value += 1
 
-    def update_last_two_keyframes(self, second_last_kf: Frame, last_kf: Frame) -> None:
+    def last_two_frames(self) -> Optional[Union[Tuple[Frame], Tuple[Frame, Frame]]]:
+        """Get the last two frames."""
         with self.lock:
-            if self.n_size.value < 1:
-                raise ValueError(
-                    "Cannot update keyframes; no keyframes exist."
-                )
-    
-            # Always update the last keyframe
-            last_idx = self.n_size.value - 1
-            self[last_idx] = last_kf
-    
-            # Only update second-to-last if it exists and second_last_kf is not None
-            if self.n_size.value >= 2 and second_last_kf is not None:
-                second_last_idx = self.n_size.value - 2
-                self[second_last_idx] = second_last_kf
+            if self.frame_count.value == 0:
+                return None
+            elif self.frame_count.value == 1:
+                return (None, self.current_frame)
+            else:
+                return (self.previous_frame, self.current_frame)
+
+    def update_last_two_frames(self, second_last_frame: Optional[Frame], last_frame: Frame) -> None:
+        """Update the last two frames."""
+        with self.lock:
+            if self.frame_count.value < 1:
+                raise ValueError("Cannot update frames; no frames exist.")
+            
+            # Update the frames
+            if self.frame_count.value >= 2 and second_last_frame is not None:
+                self.previous_frame = second_last_frame
+            self.current_frame = last_frame
 
     def update_T_WCs(self, T_WCs, idx) -> None:
         with self.lock:
