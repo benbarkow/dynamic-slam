@@ -32,6 +32,8 @@ class FactorGraph:
         kf_jj = [self.frames[idx] for idx in jj]
         feat_i = torch.cat([kf_i.feat for kf_i in kf_ii])
         feat_j = torch.cat([kf_j.feat for kf_j in kf_jj])
+        # attn_mask_i = torch.cat([kf_i.attn_mask for kf_i in kf_ii]) if all(kf_i.attn_mask is not None for kf_i in kf_ii) else None
+        # attn_mask_j = torch.cat([kf_j.attn_mask for kf_j in kf_jj]) if all(kf_j.attn_mask is not None for kf_j in kf_jj) else None
         attn_mask_i = torch.cat([kf_i.dynamic_mask for kf_i in kf_ii]) if all(kf_i.dynamic_mask is not None for kf_i in kf_ii) else None
         attn_mask_j = torch.cat([kf_j.dynamic_mask for kf_j in kf_jj]) if all(kf_j.dynamic_mask is not None for kf_j in kf_jj) else None
         pos_i = torch.cat([kf_i.pos for kf_i in kf_ii])

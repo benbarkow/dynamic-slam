@@ -39,20 +39,21 @@ class Frame:
             if self.dynamic_mask is None:
                 self.dynamic_mask = mask
             return
-            
-        self.attn_mask = mask
+        
+        if self.attn_mask is None:
+            self.attn_mask = mask
 
         if self.dynamic_mask is None:
             self.dynamic_mask = self.attn_mask.clone()
         else:
-            self.dynamic_mask = self.dynamic_mask | self.attn_mask
+            self.dynamic_mask = self.dynamic_mask | mask
             
-        if self.dynamic_masks is None:
-            self.dynamic_masks = mask
-        else:
-            print("add mask to keyframe", self.frame_id)
-            self.dynamic_masks = torch.cat([self.dynamic_masks, self.attn_mask], dim=0)
-            print("dimension", self.dynamic_masks.shape)
+        # if self.dynamic_masks is None:
+        #     self.dynamic_masks = mask
+        # else:
+        #     print("add mask to keyframe", self.frame_id)
+        #     self.dynamic_masks = torch.cat([self.dynamic_masks, self.attn_mask], dim=0)
+        #     print("dimension", self.dynamic_masks.shape)
     
     def get_score(self, C):
         filtering_score = config["tracking"]["filtering_score"]
