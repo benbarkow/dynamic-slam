@@ -141,7 +141,7 @@ class AttentionMaskGenerator:
         cross_att_k_j_mean, cross_att_k_j_var = aggregate_attention(pred2['cross_atten_maps_k'], aggregate_j=False)
         return cross_att_k_i_mean, cross_att_k_i_var, cross_att_k_j_mean, cross_att_k_j_var
         
-    def save_attention_maps(self, save_folder='demo_tmp/attention_vis', id="0"):
+    def save_attention_maps(self, id="0", save_folder='demo_tmp/attention_vis',):
         self.vis_attention_masks(1-self.cross_att_k_i_mean_fused, save_folder=save_folder, save_name='cross_att_k_i_mean', id=id)
         self.vis_attention_masks(self.cross_att_k_i_var_fused, save_folder=save_folder, save_name='cross_att_k_i_var', id=id)
         self.vis_attention_masks(1-self.cross_att_k_j_mean_fused, save_folder=save_folder, save_name='cross_att_k_j_mean', id=id)

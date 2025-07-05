@@ -1,0 +1,7 @@
+inherit: "config/base.yaml"
+
+use_calib: True
+intrinsics: "config/intrinsics_bonn.yaml"
+single_thread: True
+dataset:
+  subsample: 1

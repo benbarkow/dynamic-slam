@@ -255,46 +255,99 @@ def _resize_mask(mask, shape):
     mask = rearrange(mask, 'b nh nw -> b (nh nw) 1', nh=N_H, nw=N_W)
     return mask
 
-def mast3r_match_asymmetric(model, frame_i, frame_j, frame_k, idx_i2j_init=None):
-    (X, C, D, Q), (res_i_to_j, res_j_in_i) = mast3r_asymmetric_inference(model, frame_i, frame_j)
+def mast3r_match_asymmetric(model, frame_j, frame_i, frame_k, frame_l, idx_i2j_init=None):
+    
     mask1, mask2 = None, None
-    disable_dynamic = False
-    if frame_k is None or (disable_dynamic is True):
-        pass
+    disable_dynamic = True
+    
+    print(
+        f"frame_j = {getattr(frame_j, 'frame_id', None)}, "
+        f"frame_i = {getattr(frame_i, 'frame_id', None)}, "
+        f"frame_k = {getattr(frame_k, 'frame_id', None)}, "
+        f"frame_l = {getattr(frame_l, 'frame_id', None)}"
+    )
+    same_frame_jk = getattr(frame_j, 'frame_id', None) == getattr(frame_k, 'frame_id', None)
+    if frame_k is None or (disable_dynamic is True) or (same_frame_jk and (getattr(frame_l, 'frame_id', None) is None)):
+        print("only two")
+        (X, C, D, Q), (res_i_to_j, res_j_in_i) = mast3r_asymmetric_inference(model, frame_i, frame_j)
     else:
-        (_, _, _, _), (res_j_to_i, res_i_in_j) = mast3r_asymmetric_inference(model, frame_j, frame_i)
-        (_, _, _, _), (res_i_to_k, res_k_in_i) = mast3r_asymmetric_inference(model, frame_i, frame_k)
-        (_, _, _, _), (res_k_to_i, res_i_in_k) = mast3r_asymmetric_inference(model, frame_k, frame_i)
-        (_, _, _, _), (res_j_to_k, res_k_in_j) = mast3r_asymmetric_inference(model, frame_j, frame_k)
-        (_, _, _, _), (res_k_to_j, res_j_in_k) = mast3r_asymmetric_inference(model, frame_k, frame_j)
         edges = [(0, 1), (1, 0), (0, 2), (2, 0), (1, 2), (2, 1)]
+        # Check if frame_j.attn_mask is None
+        if same_frame_jk:
+            (_, _, _, _), (res_i_to_l, res_l_in_i) = mast3r_asymmetric_inference(model, frame_i, frame_l)
+            (_, _, _, _), (res_l_to_i, res_i_in_l) = mast3r_asymmetric_inference(model, frame_l, frame_i)
+            (_, _, _, _), (res_i_to_j, res_j_in_i) = mast3r_asymmetric_inference(model, frame_i, frame_j)
+            (_, _, _, _), (res_j_to_i, res_i_in_j) = mast3r_asymmetric_inference(model, frame_j, frame_i)
+            (_, _, _, _), (res_j_to_l, res_l_in_j) = mast3r_asymmetric_inference(model, frame_j, frame_l)
+            (_, _, _, _), (res_l_to_j, res_j_in_l) = mast3r_asymmetric_inference(model, frame_l, frame_j)
 
-        all_results = [
-            (res_i_to_j, res_j_in_i),
-            (res_j_to_i, res_i_in_j),
-            (res_i_to_k, res_k_in_i),
-            (res_k_to_i, res_i_in_k),
-            (res_j_to_k, res_k_in_j),
-            (res_k_to_j, res_j_in_k)
-        ]
-        
+            all_results = [
+                (res_i_to_j, res_j_in_i),
+                (res_j_to_i, res_i_in_j),
+                (res_i_to_l, res_l_in_i),
+                (res_l_to_i, res_i_in_l),
+                (res_j_to_l, res_l_in_j),
+                (res_l_to_j, res_j_in_l),
+            ]
+            
+        elif frame_j.attn_mask is not None:
+          
+            # Do 6 inferences with frames i, k, l
+            (_, _, _, _), (res_i_to_k, res_k_in_i) = mast3r_asymmetric_inference(model, frame_i, frame_k)
+            (_, _, _, _), (res_k_to_i, res_i_in_k) = mast3r_asymmetric_inference(model, frame_k, frame_i)
+            (_, _, _, _), (res_i_to_l, res_l_in_i) = mast3r_asymmetric_inference(model, frame_i, frame_l)
+            (_, _, _, _), (res_l_to_i, res_i_in_l) = mast3r_asymmetric_inference(model, frame_l, frame_i)
+            (_, _, _, _), (res_k_to_l, res_l_in_k) = mast3r_asymmetric_inference(model, frame_k, frame_l)
+            (_, _, _, _), (res_l_to_k, res_k_in_l) = mast3r_asymmetric_inference(model, frame_l, frame_k)
+            
+            all_results = [
+                (res_i_to_k, res_k_in_i),
+                (res_k_to_i, res_i_in_k),
+                (res_i_to_l, res_l_in_i),
+                (res_l_to_i, res_i_in_l),
+                (res_k_to_l, res_l_in_k),
+                (res_l_to_k, res_k_in_l)
+            ]
+        else:
+            print("use keyframe for mask")
+            # Do 6 inferences with frames i, j, k
+            (_, _, _, _), (res_i_to_j, res_j_in_i) = mast3r_asymmetric_inference(model, frame_i, frame_j)
+            (_, _, _, _), (res_j_to_i, res_i_in_j) = mast3r_asymmetric_inference(model, frame_j, frame_i)
+            (_, _, _, _), (res_i_to_k, res_k_in_i) = mast3r_asymmetric_inference(model, frame_i, frame_k)
+            (_, _, _, _), (res_k_to_i, res_i_in_k) = mast3r_asymmetric_inference(model, frame_k, frame_i)
+            (_, _, _, _), (res_j_to_k, res_k_in_j) = mast3r_asymmetric_inference(model, frame_j, frame_k)
+            (_, _, _, _), (res_k_to_j, res_j_in_k) = mast3r_asymmetric_inference(model, frame_k, frame_j)
+            
+            all_results = [
+                (res_i_to_j, res_j_in_i),
+                (res_j_to_i, res_i_in_j),
+                (res_i_to_k, res_k_in_i),
+                (res_k_to_i, res_i_in_k),
+                (res_j_to_k, res_k_in_j),
+                (res_k_to_j, res_j_in_k)
+            ]
+       
         mask_generator = AttentionMaskGenerator(all_results, edges)
         mask_generator.set_cross_att()
         # mask_generator.save_attention_maps(frame_i.frame_id)
-        upsampled_refined_dynamic_map = mask_generator.get_dynamic_map(frame_i.frame_id);
+        upsampled_refined_dynamic_map = mask_generator.get_dynamic_map(frame_i.frame_id)
         mask1, mask2, mask3 = torch.split(upsampled_refined_dynamic_map, [1, 1, 1], dim=0)
         mask1 = mask1.to(device="cuda")
         mask2 = mask2.to(device="cuda")
         mask3 = mask3.to(device="cuda")
         frame_i.set_attn_mask(mask1)
-        frame_j.set_attn_mask(mask2)
-        frame_k.set_attn_mask(mask3, safe=True)
+        if(same_frame_jk):
+            frame_j.set_attn_mask(mask2)
+            frame_l.set_attn_mask(mask3)
+        else:
+            if frame_j.attn_mask is not None:
+                frame_k.set_attn_mask(mask2)
+                frame_l.set_attn_mask(mask3)
+            else:
+                frame_j.set_attn_mask(mask2)
+                frame_k.set_attn_mask(mask3)
+            
         (X, C, D, Q), (_, _) = mast3r_asymmetric_inference(model, frame_i, frame_j)
-        # mask_generator.save_attention_maps(id=frame_i.frame_id)
-    # print("res1 attn_maps----------------------------------------------------")
-    # print(res1["cross_atten_maps_k"])
-    # print("res2 attn_maps----------------------------------------------------")
-    # print(res2["cross_atten_maps_k"])
 
     b, h, w = X.shape[:-1]
     # 2 outputs per inference

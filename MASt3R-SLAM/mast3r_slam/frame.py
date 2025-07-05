@@ -40,20 +40,19 @@ class Frame:
                 self.dynamic_mask = mask
             return
         
-        if self.attn_mask is None:
-            self.attn_mask = mask
+        self.attn_mask = mask
 
         if self.dynamic_mask is None:
             self.dynamic_mask = self.attn_mask.clone()
         else:
             self.dynamic_mask = self.dynamic_mask | mask
             
-        # if self.dynamic_masks is None:
-        #     self.dynamic_masks = mask
-        # else:
-        #     print("add mask to keyframe", self.frame_id)
-        #     self.dynamic_masks = torch.cat([self.dynamic_masks, self.attn_mask], dim=0)
-        #     print("dimension", self.dynamic_masks.shape)
+        if self.dynamic_masks is None:
+            self.dynamic_masks = mask
+        else:
+            print("add mask to keyframe", self.frame_id)
+            self.dynamic_masks = torch.cat([self.dynamic_masks, mask], dim=0)
+            print("dimension", self.dynamic_masks.shape)
     
     def get_score(self, C):
         filtering_score = config["tracking"]["filtering_score"]
@@ -277,6 +276,10 @@ class SharedKeyframes:
         self.attn_mask = torch.zeros(buffer,1, h, w, device=device, dtype=torch.bool).share_memory_()
         self.dynamic_mask = torch.zeros(buffer,1, h, w, device=device, dtype=torch.bool).share_memory_()
         self.dynamic_masks = torch.zeros(buffer, 20, h, w, device=device, dtype=torch.bool).share_memory_()
+       
+        self.last_four_frames = [None, None, None, None]
+        self.four_frame_count = manager.Value("i", 0)
+
 
     def __getitem__(self, idx) -> Frame:
         with self.lock:
@@ -364,7 +367,65 @@ class SharedKeyframes:
     def pop_last(self):
         with self.lock:
             self.n_size.value -= 1
+            
+    def add_frame(self, frame: Frame) -> None:
+        """Add a new frame, keeping track of the last four frames."""
+        with self.lock:
+            current_count = self.four_frame_count.value
+            
+            if current_count < 4:
+                # Still filling up the buffer
+                self.last_four_frames[current_count] = frame
+                self.four_frame_count.value += 1
+            else:
+                # Shift frames left and add new frame at the end
+                self.last_four_frames[0] = self.last_four_frames[1]
+                self.last_four_frames[1] = self.last_four_frames[2]
+                self.last_four_frames[2] = self.last_four_frames[3]
+                self.last_four_frames[3] = frame
+            
+    def last_two_frames(self, stride=1):
+        """Get the last two frames with optional stride from last_four_frames array.
+        
+        Returns:
+            Tuple of ((frame1, frame2), (buffer_idx1, buffer_idx2)) where frames come from 
+            last_four_frames but indices are their actual positions in the keyframe buffer
+        """
+        with self.lock:
+            if stride < 1 or stride > 2:
+                raise ValueError("Stride must be 1 or 2")
+                
+            current_count = self.four_frame_count.value
+            buffer_size = self.n_size.value
+            
+            if current_count == 0:
+                return None
+            elif current_count == 1:
+                # Return frame from last_four_frames[0] with buffer index
+                return ((None, self.last_four_frames[0]), (None, buffer_size - 1))
+            elif stride == 1 or current_count < 4:
+                # Normal behavior: return last two frames from last_four_frames
+                if current_count == 2:
+                    return ((self.last_four_frames[0], self.last_four_frames[1]), 
+                        (buffer_size - 2, buffer_size - 1))
+                elif current_count == 3:
+                    return ((self.last_four_frames[1], self.last_four_frames[2]), 
+                        (buffer_size - 2, buffer_size - 1))
+                else:  # current_count >= 4
+                    return ((self.last_four_frames[2], self.last_four_frames[3]), 
+                        (buffer_size - 2, buffer_size - 1))
+            else:  # stride == 2 and current_count >= 4
+                # Return 3rd from end and 1st from end from last_four_frames
+                # last_four_frames[1] corresponds to buffer_size - 3
+                # last_four_frames[3] corresponds to buffer_size - 1
+                return ((self.last_four_frames[0], self.last_four_frames[2]), 
+                    (buffer_size - 4, buffer_size - 2))
 
+    def update_keyfra(self, second_last_frame: Optional[Frame]) -> None:
+        """Update the frames using provided indices. Only updates non-None frames."""
+        with self.lock:
+            self[self.n_size.value - 1] = second_last_frame
+        
     def last_keyframe(self) -> Optional[Frame]:
         with self.lock:
             if self.n_size.value == 0:

@@ -40,7 +40,8 @@ class MonocularDataset(torch.utils.data.Dataset):
         return self.timestamps[idx]
 
     def read_img(self, idx):
-        img = cv2.imread(self.rgb_files[idx])
+        img_path = str(self.rgb_files[idx])
+        img = cv2.imread(img_path)
         return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
     def get_image(self, idx):
@@ -72,6 +73,7 @@ class TUMDataset(MonocularDataset):
         tstamp_rgb = np.loadtxt(rgb_list, delimiter=" ", dtype=np.unicode_, skiprows=0)
         self.rgb_files = [self.dataset_path / f for f in tstamp_rgb[:, 1]]
         self.timestamps = tstamp_rgb[:, 0]
+
         match = re.search(r"freiburg(\d+)", dataset_path)
         idx = int(match.group(1))
         if idx == 1:
@@ -267,12 +269,18 @@ class MP4Dataset(MonocularDataset):
 class RGBFiles(MonocularDataset):
     def __init__(self, dataset_path):
         super().__init__()
-        self.use_calibration = False
+        # self.use_calibration = False
         self.dataset_path = pathlib.Path(dataset_path)
-        self.rgb_files = natsorted(list((self.dataset_path).glob("*.png")))
+        rgb_dir = self.dataset_path / "rgb"
+        self.rgb_files = natsorted(list(rgb_dir.glob("*.png")))
+
         self.timestamps = np.arange(0, len(self.rgb_files)).astype(self.dtype) / 30.0
-
-
+        # calib = np.array(
+        #     [542.822841, 542.576870, 315.593520, 237.756098, 0.039903, -0.099343, -0.000730, -0.000144, 0.000000]
+        # )
+        # W, H = 640, 480
+        # self.camera_intrinsics = Intrinsics.from_calib(self.img_size, W, H, calib)
+        
 class Intrinsics:
     def __init__(self, img_size, W, H, K_orig, K, distortion, mapx, mapy):
         self.img_size = img_size
@@ -328,6 +336,8 @@ def load_dataset(dataset_path):
         return SevenScenesDataset(dataset_path)
     if "realsense" in split_dataset_type:
         return RealsenseDataset()
+    if "webcam" in split_dataset_type:
+        return Webcam()
     if "webcam" in split_dataset_type:
         return Webcam()
 
