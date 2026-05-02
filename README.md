@@ -84,7 +84,7 @@ Input Frame
 The coarse Easi3R mask is used to extract **query points** at the most dynamic locations. These are passed as prompts to [SAM2](https://github.com/facebookresearch/segment-anything-2), which produces a precise, semantically clean segmentation mask. This two-stage approach combines the zero-shot dynamic detection of Easi3R with the pixel-accurate segmentation quality of SAM2.
 
 <!-- Replace with your SAM2 refinement GIF -->
-![SAM2 Refinement](assets/sam.png)
+![SAM2 Refinement](assets/sam.PNG)
 
 *Rough Easi3R mask (left) refined to a clean SAM2 segmentation (right).*
 
