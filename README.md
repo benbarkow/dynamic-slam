@@ -2,10 +2,7 @@
 
 > Extending MASt3R-SLAM with attention-based dynamic object masking for improved camera pose estimation and 3D reconstruction in dynamic environments.
 
-**TU Munich** · Chair of Computer Aided Medical Procedures · AT3DCV Final Workshop, July 2025
 
-*Ben Barkow · Lukas Bruns · Han My Do*  
-*Advisors: Boody Elskhawy · Mert Asim Karaoglu · Mert Kiray · Hannah Schieber*
 
 ---
 
@@ -120,11 +117,8 @@ Evaluated on the **Wild SLAM Mocap Dataset** — 10 RGB-D sequences with motion-
 
 This project was developed as part of the **Advanced Topics in 3D Computer Vision (AT3DCV)** course at the Technical University of Munich.
 
-| Name | GitHub |
-|------|--------|
-| Ben Barkow | — |
-| Lukas Bruns | — |
-| Han My Do | — |
+*Ben Barkow · Lukas Bruns · Han My Do*  
+*Advisors: Boody Elskhawy · Mert Asim Karaoglu · Mert Kiray · Hannah Schieber*
 
 ---
 
