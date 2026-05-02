@@ -9,7 +9,7 @@
 Classical SLAM systems assume a **static world** — a fundamental limitation when deployed in real environments full of moving people, robots, and objects. This project integrates a two-stage dynamic masking pipeline into [MASt3R-SLAM](https://github.com/nianticlabs/mast3r-slam) to actively detect and suppress dynamic regions, resulting in measurably cleaner reconstructions and more accurate camera tracking.
 
 <!-- Replace with your demo GIF -->
-![Demo](assets/image62-ezgif.com-cut.gif)
+![Demo](assets/demo.gif)
 
 *Left: Vanilla MASt3R-SLAM baseline. Right: Our implementation (dynamic objects masked out)*
 
@@ -28,7 +28,8 @@ Our approach achieves consistent improvements in camera pose estimation over the
 Beyond pose accuracy, dynamic objects are visibly cleaner in the reconstructed 3D pointmaps — people and moving props leave far fewer reconstruction artifacts compared to the unmodified baseline.
 
 <!-- Replace with your 3D reconstruction comparison GIF -->
-![3D Reconstruction Comparison](assets/reconstruction_comparison.gif)
+![3D Reconstruction Comparison](assets/mast3rslam_reconstruction_racket.gif)
+![3D Reconstruction Comparison](assets/our_reconstruction_racket.gif)
 
 ---
 
