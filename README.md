@@ -2,6 +2,11 @@
 
 > Extending MASt3R-SLAM with attention-based dynamic object masking for improved camera pose estimation and 3D reconstruction in dynamic environments.
 
+**TU Munich** · Chair of Computer Aided Medical Procedures · AT3DCV Final Workshop, July 2025
+
+*Ben Barkow · Lukas Bruns · Han My Do*  
+*Advisors: Boody Elskhawy · Mert Asim Karaoglu · Mert Kiray · Hannah Schieber*
+
 ---
 
 ## Overview
@@ -11,7 +16,7 @@ Classical SLAM systems assume a **static world** — a fundamental limitation wh
 <!-- Replace with your demo GIF -->
 ![Demo](assets/demo.gif)
 
-*Left: Vanilla MASt3R-SLAM baseline. Right: Our implementation (dynamic objects masked out)*
+*Left: Our implementation (dynamic objects masked out). Right: Vanilla MASt3R-SLAM baseline.*
 
 ---
 
@@ -27,9 +32,16 @@ Our approach achieves consistent improvements in camera pose estimation over the
 
 Beyond pose accuracy, dynamic objects are visibly cleaner in the reconstructed 3D pointmaps — people and moving props leave far fewer reconstruction artifacts compared to the unmodified baseline.
 
-<!-- Replace with your 3D reconstruction comparison GIF -->
-![3D Reconstruction Comparison](assets/mast3rslam_reconstruction_racket.gif)
-![3D Reconstruction Comparison](assets/our_reconstruction_racket.gif)
+<table>
+  <tr>
+    <th align="center">MASt3R-SLAM (baseline)</th>
+    <th align="center">Ours (dynamic masking)</th>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/mast3rslam_reconstruction_racket.gif"/></td>
+    <td align="center"><img src="assets/our_reconstruction_racket.gif"/></td>
+  </tr>
+</table>
 
 ---
 
