@@ -2,11 +2,6 @@
 
 > Extending MASt3R-SLAM with attention-based dynamic object masking for improved camera pose estimation and 3D reconstruction in dynamic environments.
 
-**TU Munich** · Chair of Computer Aided Medical Procedures · AT3DCV Final Workshop, July 2025
-
-*Ben Barkow · Lukas Bruns · Han My Do*  
-*Advisors: Boody Elskhawy · Mert Asim Karaoglu · Mert Kiray · Hannah Schieber*
-
 ---
 
 ## Overview
