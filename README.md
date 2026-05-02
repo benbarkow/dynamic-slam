@@ -75,7 +75,7 @@ Input Frame
 [Easi3R](https://easi3r.github.io/) is a **training-free** method that disentangles the attention maps already computed inside DUSt3R/MASt3R. By combining source and reference attention in a specific formulation, it produces a rough heatmap that highlights dynamic regions without any additional model training.
 
 <!-- Replace with your masking GIF -->
-![Easi3R Masking](assets/easi3r_mask.gif)
+![Easi3R Masking](assets/easi3r.png)
 
 *Raw attention heatmap → Easi3R binary mask → Overlay on frame.*
 
@@ -84,7 +84,7 @@ Input Frame
 The coarse Easi3R mask is used to extract **query points** at the most dynamic locations. These are passed as prompts to [SAM2](https://github.com/facebookresearch/segment-anything-2), which produces a precise, semantically clean segmentation mask. This two-stage approach combines the zero-shot dynamic detection of Easi3R with the pixel-accurate segmentation quality of SAM2.
 
 <!-- Replace with your SAM2 refinement GIF -->
-![SAM2 Refinement](assets/sam2_refinement.gif)
+![SAM2 Refinement](assets/sam.png)
 
 *Rough Easi3R mask (left) refined to a clean SAM2 segmentation (right).*
 
