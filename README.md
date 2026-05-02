@@ -11,7 +11,7 @@ Classical SLAM systems assume a **static world** — a fundamental limitation wh
 <!-- Replace with your demo GIF -->
 ![Demo](assets/image62-ezgif.com-cut.gif)
 
-*Left: Our implementation (dynamic objects masked out). Right: Vanilla MASt3R-SLAM baseline.*
+*Left: Vanilla MASt3R-SLAM baseline. Right: Our implementation (dynamic objects masked out)*
 
 ---
 
